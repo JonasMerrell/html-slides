@@ -1,4 +1,4 @@
-/* mPRIME — minimal U of U / mPRIME research-talk theme on light grey paper: condensed display titles and IBM Plex type. The frame is just a section timeline across the top, logos in the top corners, and the slide number and talk timer along the bottom. Derived from the "Certification by Analysis" deck. */
+/* mPRIME — minimal U of U / mPRIME research-talk theme on light grey paper: condensed display titles and IBM Plex type. The frame is just a section timeline across the top, U of U and mPRIME logos in the top corners, and the slide number and talk timer along the bottom. Derived from the "Certification by Analysis" deck. */
 
 @font-face { font-family: "Big Shoulders Display"; font-weight: 700 800; font-display: swap; src: url("assets/fonts/big-shoulders-display-700-800.woff2") format("woff2"); }
 @font-face { font-family: "IBM Plex Sans"; font-weight: 400 700; font-display: swap; src: url("assets/fonts/ibm-plex-sans-400-700.woff2") format("woff2"); }
@@ -41,13 +41,16 @@
 .slide ::selection { background: var(--brand); color: #F6F9FB; }
 
 /* ---------- frame ---------- */
-/* Logos: put decks/<deck>/assets/logos/left.svg|png and right.svg|png in the deck. Missing files just don't show. */
+/* Logos: U of U top-left, mPRIME top-right, copied into the deck as assets/logos/uofu.png and mprime.png.
+   To change a logo, replace that file in the deck (a missing file just doesn't show). */
+/* Present mode: clicking the U logo goes to the title slide, the mPRIME logo to the last slide */
+.slide { --before-link: first; --after-link: last; }
 .slide::before, .slide::after {
   content: ""; position: absolute; top: 30px; width: 60px; height: 60px; z-index: 5; pointer-events: none;
   background-repeat: no-repeat; background-position: center; background-size: contain;
 }
-.slide::before { left: 36px; background-image: url("assets/logos/left.svg"), url("assets/logos/left.png"); }
-.slide::after { right: 36px; background-image: url("assets/logos/right.svg"), url("assets/logos/right.png"); }
+.slide::before { left: 36px; background-image: url("assets/logos/uofu.png"); }
+.slide::after { right: 36px; background-image: url("assets/logos/mprime.png"); }
 
 /* Timeline: identical <nav class="toc"> on each content slide; data-section="N" on the section highlights item N */
 .slide .toc { flex: 0 0 auto; display: flex; margin: 0 54px; border-bottom: 1.5px solid var(--line-soft); }

@@ -50,6 +50,19 @@ before moving to the next slide, ← hides it again, and going back onto a slide
 `slides render` and `slides check` always show the fully built slide, and outline build elements with a dashed purple
 line; the inspector's "Animation" field sets them. Printing shows everything. No `<script>` needed.
 
+## Section timelines (`<nav class="toc">`)
+
+Themes with a chapter timeline (`mprime`, and others) put the same `<nav class="toc"><span>…</span>…</nav>` on every
+content slide, and each slide says which chapter it belongs to with `data-section="N"` (1-based) on its `<section>`.
+- **One timeline per deck.** Editing it on one slide in the editor (or saving a slide through the server or CLI with a
+  changed nav) copies it to every slide that has one. New slides get the deck's current timeline and the chapter of
+  the slide before them. If you edit slide files directly, run `slides toc <deck> --sync --from <id>` afterwards, or
+  relabel everything at once with `slides toc <deck> --set "Intro|Method|Results"`. `slides toc <deck>` shows the
+  labels, each slide's chapter, and any slide whose timeline differs.
+- **Chapter picker:** the editor's slide panel has a "Chapter (timeline)" select that sets `data-section`.
+- **Present mode and exports:** each timeline item is a link to the first slide of that chapter. Double-click the
+  slide number to type a slide number and jump there (Enter; Esc cancels).
+
 ## Themes that come with their own layouts
 
 A theme can include its own layouts in `templates/layouts/<theme>/`, which replace the general layouts with the same name.
@@ -58,12 +71,14 @@ Run `slides layouts <deck>` to see what's available for a deck. `slides add` pic
 
 ### `mprime` theme (U of U / mPRIME research talks)
 Layouts: `title`, `content`, `split` (text | figure), `blank`. The frame is deliberately minimal:
-- **Timeline:** content slides each carry the same `<nav class="toc">…</nav>`. Setting `data-section="N"` on the
-  section highlights item N and marks the earlier ones as done. If you rename a section, update the nav on every slide
-  (they're identical, so a find-and-replace works).
+- **Timeline:** content slides each carry the same `<nav class="toc">…</nav>` (Chapter 1, Chapter 2, Chapter 3 in the
+  template). `data-section="N"` on the section says which chapter the slide is in: item N is highlighted and earlier
+  ones are marked done. See "Section timelines" above for keeping it identical across slides.
 - **Slide number and timer:** keep the empty `<div class="slide-num"></div>` and `<div class="slide-timer"></div>`.
   They're filled in when presenting (the timer counts up; click it to pause, press T to reset).
-- **Logos:** come from `decks/<deck>/assets/logos/left.svg|png` and `right.svg|png`. Don't put logos in the slides.
+- **Logos:** U of U top-left, mPRIME top-right, from `decks/<deck>/assets/logos/uofu.png` and `mprime.png` (copied in
+  when the theme is applied; replace a file to change it). Don't put logos in the slides. When presenting, the U logo
+  links to the title slide and the mPRIME logo to the last slide (`--before-link: first; --after-link: last` in the theme).
 - **Optional colour per section:** add `obj1` / `obj2` / `obj3` to the `<section>`.
 - Body: `<div class="main">` vertically centres the content; also available are `.split`, `.figure`, `.caption`, `.cite` (source footer) and `.kicker`.
 - There's no KaTeX: write maths with Unicode, `<sub>`/`<sup>`, or as SVG or images.

@@ -28,7 +28,8 @@ On a remote machine, forward the port with `ssh -L 4173:127.0.0.1:4173 host`, or
    *"address the open comments in deck X"*. It runs `slides comments`, edits the files and
    resolves each note with a reply, and you watch the slides update live.
 4. **Present / export.** **Present** opens a live presentation (arrow keys, `F` fullscreen,
-   `N` speaker notes). **Export** downloads one self-contained `.html` file (print it to PDF if needed).
+   `N` speaker notes; timeline items link to their chapter, double-click the slide number to jump to a slide).
+   **Export** downloads one self-contained `.html` file (print it to PDF if needed).
 
 ## Layout
 

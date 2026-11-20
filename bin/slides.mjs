@@ -26,6 +26,10 @@ Slides
   slides mv <deck> <slide> (--after ID | --at N | --first)
   slides rename <deck> <slide> <new-id>
   slides order <deck> <id> <id> ...              set full slide order
+  slides toc <deck>                              show the section timeline and each slide's chapter
+  slides toc <deck> --set "A|B|C" | --sync [--from ID]
+                                                 relabel the timeline on every slide, or copy one slide's to all
+                                                 (default source: the most recently edited slide)
 
 Agent ↔ human loop
   slides comments <deck> [--all]                 notes the human left (open only by default)
@@ -186,6 +190,24 @@ async function main() {
       const d = need(rest[0], 'deck name');
       const meta = store.updateDeck(d, { slides: rest.slice(1) });
       console.log(meta.slides.join(' → '));
+      return;
+    }
+
+    case 'toc': {
+      const d = need(rest[0], 'deck name');
+      if (typeof opt.set === 'string' || opt.sync) {
+        const labels = typeof opt.set === 'string' ? opt.set.split('|').map((x) => x.trim()).filter(Boolean) : undefined;
+        const changed = store.syncToc(d, typeof opt.from === 'string' ? opt.from : undefined, { labels });
+        console.log(changed.length ? `Updated the timeline on: ${changed.join(', ')}` : 'Timeline already identical on every slide.');
+      }
+      const meta = store.readMeta(d);
+      const withToc = meta.slides.map((id) => [id, store.readSlide(d, id)]).filter(([, h]) => store.tocOf(h));
+      if (!withToc.length) { console.log(`No slide in "${d}" has a <nav class="toc"> timeline.`); return; }
+      const labels = store.tocLabels(store.tocOf(withToc[0][1]));
+      console.log(labels.map((l, k) => `${k + 1}. ${l}`).join('   '));
+      const differ = withToc.filter(([, h]) => store.tocLabels(store.tocOf(h)).join('|') !== labels.join('|')).map(([id]) => id);
+      if (differ.length) console.log(`⚠ different timeline on: ${differ.join(', ')} (fix with: slides toc ${d} --sync --from <id>)`);
+      for (const [id, h] of withToc) { const n = store.sectionOf(h); console.log(`  ${id.padEnd(24)} ${n ? `${n}. ${labels[n - 1] ?? '(no such item)'}` : '—'}`); }
       return;
     }
 

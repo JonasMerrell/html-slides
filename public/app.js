@@ -1220,11 +1220,23 @@ function slidePanel() {
   const bg = h('input', { type: 'color', value: toHex(S.doc?.defaultView.getComputedStyle(sec).backgroundColor || '#fff') });
   bg.addEventListener('input', () => { section().style.background = bg.value; commitSoon(); });
   const over = S.status[id]?.overflow || [];
+  // chapter = which timeline item (<nav class="toc">) this slide belongs to (data-section="N")
+  const toc = sec?.querySelector('.toc');
+  let chapter = null;
+  if (toc) {
+    const cur = sec.dataset.section || '';
+    const labels = [...toc.children].map((c, k) => c.textContent.trim() || `Item ${k + 1}`);
+    const sel = h('select', null, [h('option', { value: '', selected: !cur }, '— none —'),
+      ...labels.map((l, k) => h('option', { value: String(k + 1), selected: cur === String(k + 1) }, `${k + 1}. ${l}`))]);
+    sel.addEventListener('change', () => { if (sel.value) section().dataset.section = sel.value; else delete section().dataset.section; commit(); renderInspector(); });
+    chapter = h('label', { class: 'field', title: 'Highlights this item in the timeline. Editing the timeline text on any slide updates every slide.' }, h('span', null, 'Chapter (timeline)'), sel);
+  }
   return h('section', { class: 'panel' },
     h('h4', null, `Slide ${S.order.indexOf(id) + 1} of ${S.order.length}`),
     h('div', { class: 'row' },
       h('label', { class: 'field' }, h('span', null, 'Slide id (file name)'), idIn),
       h('label', { class: 'field', style: { flex: '0 0 auto' } }, h('span', null, 'Layout'), h('div', { class: 'el-name', style: { padding: '7px 0' } }, sec?.dataset.layout || '—'))),
+    chapter,
     over.length ? h('div', { class: 'chip warn' }, `⚠ Overflows: ${over.join(', ')}`) : null,
     h('div', { class: 'row' }, bg, h('span', { class: 'muted', style: { flex: 1 } }, 'Slide background'),
       sec?.style.background ? btn('', () => { section().style.removeProperty('background'); commit(); renderInspector(); }, { cls: 'icon ghost small', ic: 'reset', title: 'Reset to theme' }) : null),
