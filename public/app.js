@@ -1550,7 +1550,7 @@ async function agentModal() {
   const deck = d || '<deck>';
   const where = `Slide editor repo: ${root}` + (INFO.host ? ` (on ${INFO.host})` : '') + `\n` +
     `Read ${root}/AGENTS.md first (and AGENTS.local.md if it exists), including "Several agents at once". ` +
-    `Run commands from the repo folder: node bin/slides.mjs help (on CHPC: module load nodejs/22.4.0 first).`;
+    `Run commands from the repo folder: node bin/slides.mjs help.`;
   const join = d
     ? `${where}\n\nYou're joining deck "${d}": ${dd}/${d}/ (slides in slides/<id>.html, order in deck.json, theme "${S.deck?.theme || ''}"). ` +
       `Other agents and I may be editing the same deck right now; the editor at ${INFO.url || 'http://127.0.0.1:4173'} live-reloads on every save.\n` +
