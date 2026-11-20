@@ -238,3 +238,12 @@ input[type=color] { width: 30px; height: 30px; padding: 2px; border: 1px solid v
 .note-pop .reply { border-left: 2px solid var(--ok); padding-left: 8px; color: var(--text-2); white-space: pre-wrap; }
 .note-pop .acts { display: flex; gap: 6px; justify-content: flex-end; align-items: center; }
 .note-pop .acts .hint-k { margin-right: auto; font-size: 11px; color: var(--text-3); }
+
+/* chapters panel */
+.chapter-list { display: flex; flex-direction: column; gap: 6px; }
+.chapter-row { display: flex; align-items: center; gap: 4px; }
+.chapter-row input { flex: 1; min-width: 0; }
+.chapter-num { width: 20px; height: 20px; flex: 0 0 auto; border-radius: 50%; display: grid; place-items: center; font-size: 11px; font-weight: 600; color: var(--text-3); border: 1px solid var(--line); }
+.chapter-row.current .chapter-num { background: var(--sel); border-color: var(--sel); color: #fff; }
+.chapter-count { width: 18px; text-align: right; font-size: 12px; flex: 0 0 auto; }
+.chapter-row .btn.icon { width: 24px; padding: 0; justify-content: center; }

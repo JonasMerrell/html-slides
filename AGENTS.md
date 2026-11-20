@@ -59,7 +59,9 @@ content slide, and each slide says which chapter it belongs to with `data-sectio
   the slide before them. If you edit slide files directly, run `slides toc <deck> --sync --from <id>` afterwards, or
   relabel everything at once with `slides toc <deck> --set "Intro|Method|Results"`. `slides toc <deck>` shows the
   labels, each slide's chapter, and any slide whose timeline differs.
-- **Chapter picker:** the editor's slide panel has a "Chapter (timeline)" select that sets `data-section`.
+- **In the editor:** the sidebar's "Chapters (timeline)" panel renames, adds, reorders and removes chapters for the
+  whole deck (moving or removing one renumbers every slide's `data-section`, so slides stay with their chapter;
+  `PUT /api/decks/<deck>/chapters`). The slide panel's "Chapter (timeline)" select sets one slide's chapter.
 - **Present mode and exports:** each timeline item is a link to the first slide of that chapter. Double-click the
   slide number to type a slide number and jump there (Enter; Esc cancels).
 

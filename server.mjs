@@ -135,6 +135,7 @@ route('POST', '/api/decks/:d/slides/:id/rename', async (req, res, p) => {
   json(res, { id: b.id });
 });
 
+route('PUT', '/api/decks/:d/chapters', async (req, res, p) => { const b = await readJson(req); json(res, { changed: store.setChapters(p.d, b.labels, b.map) }); });
 route('GET', '/api/decks/:d/theme', (req, res, p) => json(res, { css: store.readThemeCss(p.d) }));
 route('PUT', '/api/decks/:d/theme', async (req, res, p) => { store.writeThemeCss(p.d, (await readJson(req)).css ?? ''); json(res, { ok: true }); });
 
@@ -143,6 +144,29 @@ route('POST', '/api/decks/:d/assets', async (req, res, p, url) => {
   if (!buf.length) throw new store.UserError('Empty upload');
   json(res, { path: store.saveAsset(p.d, url.searchParams.get('name') || 'upload.png', buf) }, 201);
 });
+
+// Insert an image from a URL (dragged or pasted links the browser itself can't read because of CORS).
+route('POST', '/api/decks/:d/assets/fetch', async (req, res, p) => {
+  const { url } = await readJson(req);
+  if (!/^https?:\/\//i.test(String(url || ''))) throw new store.UserError('Only http(s) image links can be fetched');
+  let r;
+  try { r = await fetch(url, { redirect: 'follow', signal: AbortSignal.timeout(20000) }); }
+  catch (e) { throw new store.UserError(`Could not download the image (${e.cause?.code || e.message})`, 502); }
+  const type = (r.headers.get('content-type') || '').split(';')[0].trim();
+  if (!r.ok) throw new store.UserError(`Could not download the image (HTTP ${r.status})`, 502);
+  if (!type.startsWith('image/')) throw new store.UserError(`That link is not an image (${type || 'unknown type'})`);
+  const buf = Buffer.from(await r.arrayBuffer());
+  if (buf.length > 50 * 1024 * 1024) throw new store.UserError('Image is larger than 50 MB', 413);
+  const ext = { 'image/jpeg': 'jpg', 'image/svg+xml': 'svg', 'image/x-icon': 'ico', 'image/vnd.microsoft.icon': 'ico' }[type] || type.split('/')[1];
+  let name = decodeURIComponent(new URL(url).pathname.split('/').pop() || '') || 'image';
+  if (!/\.[a-z0-9]{2,5}$/i.test(name)) name += '.' + ext;
+  json(res, { path: store.saveAsset(p.d, name, buf) }, 201);
+});
+
+// What the browser delivered on paste/drop (debugging embedded browsers): POST from the editor, GET to read.
+const DIAG = [];
+route('POST', '/api/diag', async (req, res) => { DIAG.push({ at: new Date().toISOString(), ua: req.headers['user-agent'], ...(await readJson(req)) }); if (DIAG.length > 50) DIAG.shift(); json(res, { ok: true }); });
+route('GET', '/api/diag', (req, res) => json(res, DIAG));
 
 route('GET', '/api/decks/:d/comments', (req, res, p) => json(res, store.readComments(p.d)));
 route('POST', '/api/decks/:d/comments', async (req, res, p) => json(res, store.addComment(p.d, await readJson(req)), 201));

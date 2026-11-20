@@ -448,7 +448,10 @@ function wireCanvas(doc) {
   doc.addEventListener('keydown', onKey);
   doc.addEventListener('input', () => { updateOverlay(); commitSoon(); });
   doc.addEventListener('paste', onPaste);
-  doc.addEventListener('dragover', (e) => { if (hasFiles(e)) { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; } });
+  doc.addEventListener('dragstart', () => { innerDrag = true; }, true);
+  doc.addEventListener('dragend', () => { innerDrag = false; }, true);
+  doc.addEventListener('dragover', (e) => { if (canTakeDrop(e)) { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; } });
+  doc.addEventListener('keydown', onPasteKey, true);
   doc.addEventListener('drop', onCanvasDrop);
   doc.addEventListener('load', () => updateOverlay(), true); // images
   win.addEventListener('message', onEmbedMessage);
@@ -692,10 +695,10 @@ async function uploadFile(file) {
   if (!r.ok) throw new Error(j.error || 'Upload failed');
   return j.path;
 }
-async function insertImageFile(file, at = null, replace = null) {
-  if (!file.type.startsWith('image/')) return toast('Only images can be dropped here', 'error');
+async function insertImageFile(file, at = null, replace = null, uploaded = null) {
+  if (!uploaded && !file.type.startsWith('image/')) return toast('Only images can be dropped here', 'error');
   try {
-    const src = await uploadFile(file);
+    const src = uploaded || await uploadFile(file);
     if (replace) { replace.setAttribute('src', src); commit(); select(replace); return; }
     const img = S.doc.createElement('img');
     img.className = 'free';
@@ -731,31 +734,128 @@ function deleteEl() {
 }
 
 // ---------- paste / drop
-const hasFiles = (e) => [...(e.dataTransfer?.types || [])].includes('Files');
-function onPaste(e) {
-  const file = [...(e.clipboardData?.files || [])].find((f) => f.type.startsWith('image/'));
-  if (S.editing) {
-    e.preventDefault();
-    if (file) return; // no images inside text
-    const text = e.clipboardData.getData('text/plain');
-    S.doc.execCommand('insertText', false, text);
-    return;
+// Accepts image files, but also image *links* (dragging an image out of another page or app, e.g. a chat or a
+// file viewer, hands over a URL rather than a file) and images inside pasted HTML. Embedded browsers (desktop
+// app previews) sometimes swallow the paste event itself, so Ctrl/⌘+V falls back to reading the clipboard.
+const IMG_EXT = /\.(png|jpe?g|gif|webp|svg|avif|bmp|ico)(\?|#|$)/i;
+const dtTypes = (dt) => [...(dt?.types || [])];
+let innerDrag = false; // a drag that started in this editor (thumbnails, selected text) is not an image drop
+document.addEventListener('dragstart', () => { innerDrag = true; }, true);
+document.addEventListener('dragend', () => { innerDrag = false; }, true);
+const canTakeDrop = (e) => !innerDrag && dtTypes(e.dataTransfer).some((t) => t === 'Files' || t === 'text/uri-list' || t === 'text/html' || t === 'text/plain');
+function diag(kind, e, extra) { // what the browser actually delivered; GET /api/diag shows the last events
+  try {
+    const dt = e?.dataTransfer || e?.clipboardData;
+    const info = { kind, view: S.view, editing: !!S.editing, target: e?.target?.nodeName, types: dtTypes(dt),
+      files: [...(dt?.files || [])].map((f) => `${f.type || '?'} ${f.size}`), items: [...(dt?.items || [])].map((i) => `${i.kind}:${i.type}`),
+      uri: dt?.getData?.('text/uri-list')?.slice(0, 200) || undefined, ...extra };
+    fetch('/api/diag', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(info) }).catch(() => {});
+  } catch {}
+}
+function imageFileFrom(dt) {
+  const f = [...(dt?.files || [])].find((x) => x.type.startsWith('image/'));
+  if (f) return f;
+  for (const it of dt?.items || []) if (it.kind === 'file' && it.type.startsWith('image/')) { const g = it.getAsFile(); if (g) return g; }
+  return null;
+}
+function imageUrlFrom(dt) {
+  const html = dt?.getData?.('text/html') || '';
+  const m = html.match(/<img\b[^>]*\bsrc\s*=\s*["']([^"']+)["']/i);
+  if (m) return m[1].replace(/&amp;/g, '&');
+  const uris = (dt?.getData?.('text/uri-list') || '').split(/\r?\n/).filter((l) => l && !l.startsWith('#'));
+  const plain = (dt?.getData?.('text/plain') || '').trim();
+  for (const u of [...uris, plain]) if (/^data:image\//i.test(u) || (/^(https?|blob|file):/i.test(u) && (IMG_EXT.test(u) || uris.includes(u)))) return u;
+  return null;
+}
+async function fileFromUrl(url) {
+  const name = (decodeURIComponent(url.split(/[?#]/)[0].split('/').pop() || '') || 'image').slice(0, 80);
+  const local = /^(data|blob):/i.test(url) || new URL(url, location.href).origin === location.origin;
+  if (local) try { // data:, blob: and this server's own files; anything else goes through the server (no CORS there)
+    const r = await fetch(url);
+    if (r.ok) { const b = await r.blob(); if (b.type.startsWith('image/') || IMG_EXT.test(url)) return new File([b], IMG_EXT.test(name) ? name : `${name}.${(b.type.split('/')[1] || 'png').replace('svg+xml', 'svg')}`, { type: b.type || 'image/png' }); }
+  } catch {}
+  if (/^https?:/i.test(url)) { // let the server fetch it (no CORS there)
+    const r = await fetch(`/api/decks/${D()}/assets/fetch`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ url }) });
+    const j = await r.json().catch(() => ({}));
+    if (r.ok && j.path) return { uploaded: j.path };
+    throw new Error(j.error || `Could not load ${url}`);
   }
-  if (file && S.view === 'editor') { e.preventDefault(); insertImageFile(file, null, S.sel?.tagName === 'IMG' ? S.sel : null); }
+  throw new Error('Could not read that image. Save it as a file and drop the file instead.');
+}
+async function insertImageFrom(fileOrUrl, at, replace) {
+  if (typeof fileOrUrl !== 'string') return insertImageFile(fileOrUrl, at, replace);
+  try {
+    const f = await fileFromUrl(fileOrUrl);
+    return f.uploaded ? insertImageFile(null, at, replace, f.uploaded) : insertImageFile(f, at, replace);
+  } catch (e) { toast(e.message, 'error'); }
+}
+let pasteSeen = 0;
+function onPaste(e) {
+  pasteSeen = Date.now();
+  diag('paste', e);
+  const dt = e.clipboardData;
+  const file = imageFileFrom(dt);
+  const url = file ? null : imageUrlFrom(dt);
+  if (S.editing) {
+    if (!file && !url) { e.preventDefault(); S.doc.execCommand('insertText', false, dt.getData('text/plain')); return; }
+    stopEditQuiet(); // an image goes on the slide, not inside the text
+  }
+  if ((file || url) && S.view === 'editor') { e.preventDefault(); insertImageFrom(file || url, null, S.sel?.tagName === 'IMG' ? S.sel : null); }
+}
+// Ctrl/⌘+V with no paste event (some embedded browsers keep it): read the clipboard ourselves.
+function onPasteKey(e) {
+  if (!((e.ctrlKey || e.metaKey) && !e.altKey && e.key.toLowerCase() === 'v') || S.view !== 'editor') return;
+  if (e.target?.closest?.('input,textarea,select') && e.target.ownerDocument === document) return;
+  const t0 = Date.now();
+  setTimeout(async () => {
+    if (pasteSeen >= t0) return;
+    diag('paste-key-without-event', null);
+    if (!navigator.clipboard?.read) return toast('This browser did not hand the paste to the page. Drop the image file instead.', 'error');
+    try {
+      for (const item of await navigator.clipboard.read()) {
+        const type = item.types.find((t) => t.startsWith('image/'));
+        if (type) { const b = await item.getType(type); if (S.editing) stopEditQuiet(); return insertImageFile(new File([b], `pasted.${type.split('/')[1].replace('svg+xml', 'svg')}`, { type }), null, S.sel?.tagName === 'IMG' ? S.sel : null); }
+        for (const t of ['text/html', 'text/plain']) if (item.types.includes(t)) {
+          const txt = await (await item.getType(t)).text();
+          const u = imageUrlFrom({ getData: (k) => (k === t ? txt : '') });
+          if (u) { if (S.editing) stopEditQuiet(); return insertImageFrom(u, null, S.sel?.tagName === 'IMG' ? S.sel : null); }
+        }
+      }
+    } catch (err) { diag('clipboard-read-failed', null, { error: String(err) }); toast('Could not read the clipboard here. Drop the image file onto the slide instead.', 'error'); }
+  }, 120);
 }
 function onCanvasDrop(e) {
-  if (!hasFiles(e)) return;
+  if (!canTakeDrop(e)) return;
   e.preventDefault();
-  const file = [...e.dataTransfer.files].find((f) => f.type.startsWith('image/'));
-  if (!file) return toast('Drop an image file', 'error');
+  diag('drop', e);
+  const file = imageFileFrom(e.dataTransfer);
+  const url = file ? null : imageUrlFrom(e.dataTransfer);
+  if (!file && !url) return toast(dtTypes(e.dataTransfer).includes('Files') ? 'Drop an image file' : 'Nothing to insert: drop an image or an image file', 'error');
   const el = pick(e.target);
   if (el?.matches?.('figure.embed')) return toast(`This is an interactive embed; its picture is its poster. Update it with: slides poster ${D()} ${embedNameOf(el)}`, 'error');
   const img = el?.tagName === 'IMG' ? el : el?.querySelector?.(':scope > img');
-  insertImageFile(file, { x: e.clientX, y: e.clientY }, img || null);
+  insertImageFrom(file || url, { x: e.clientX, y: e.clientY }, img || null);
 }
-document.addEventListener('dragover', (e) => { if (hasFiles(e)) e.preventDefault(); });
-document.addEventListener('drop', (e) => { if (hasFiles(e)) e.preventDefault(); });
+// Dropping on the grey area around the slide (or the selection box on top of it) also inserts, at the centre.
+const onStage = (e) => S.view === 'editor' && S.doc && e.target.closest?.('.stage-wrap');
+function onStageDrop(e) {
+  if (!canTakeDrop(e) || !onStage(e)) { if (dtTypes(e.dataTransfer).includes('Files') && !e.target.closest?.('input,textarea')) e.preventDefault(); return; }
+  e.preventDefault();
+  diag('drop-stage', e);
+  const file = imageFileFrom(e.dataTransfer), url = file ? null : imageUrlFrom(e.dataTransfer);
+  if (!file && !url) return toast('Drop an image or an image file', 'error');
+  const r = E.iframe.getBoundingClientRect(), k = r.width / W;
+  const x = (e.clientX - r.left) / k, y = (e.clientY - r.top) / k;
+  const inside = x >= 0 && y >= 0 && x <= W && y <= H;
+  insertImageFrom(file || url, inside ? { x, y } : null, null);
+}
+document.addEventListener('dragover', (e) => {
+  if (canTakeDrop(e) && onStage(e)) { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; }
+  else if (dtTypes(e.dataTransfer).includes('Files') && !e.target.closest?.('input,textarea')) e.preventDefault(); // never navigate away to a dropped file
+});
+document.addEventListener('drop', onStageDrop);
 document.addEventListener('paste', (e) => { if (!e.target.closest?.('input,textarea')) onPaste(e); });
+document.addEventListener('keydown', onPasteKey, true);
 
 // ---------- keyboard
 function onKey(e) {
@@ -1063,6 +1163,7 @@ function renderInspector() {
   E.inspector.replaceChildren(...[
     S.sel ? elementPanel(S.sel) : null,
     S.current ? slidePanel() : null,
+    S.current ? chaptersPanel() : null,
     commentsPanel()].filter(Boolean));
   E.inspector.scrollTop = scroll;
 }
@@ -1246,6 +1347,60 @@ function slidePanel() {
       btn('Save as layout', () => saveLayoutModal(), { cls: 'small', title: 'Reuse this slide as a template layout' }),
       btn('Duplicate', () => duplicateSlide(id), { cls: 'small' }),
       btn('Delete', () => deleteSlide(id), { cls: 'small danger' })));
+}
+
+// ---------- chapters: the deck's section timeline (<nav class="toc">), edited for every slide at once
+const TOC_HTML_RE = /<nav\b[^>]*\bclass\s*=\s*["'][^"']*\btoc\b[^"']*["'][^>]*>([\s\S]*?)<\/nav>/i;
+function deckChapters() {
+  for (const id of [S.current, ...S.order]) {
+    const m = (S.html[id] || '').match(TOC_HTML_RE);
+    if (m) return [...m[1].matchAll(/<(\w+)\b[^>]*>([\s\S]*?)<\/\1>/g)].map((x) => x[2].replace(/<[^>]+>/g, '').replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/\s+/g, ' ').trim());
+  }
+  return null;
+}
+const slideChapter = (id) => ((S.html[id] || '').match(/^\s*<section\b[^>]*\bdata-section\s*=\s*["'](\d+)["']/i) || [])[1];
+async function applyChapters(labels, map) {
+  try {
+    if (S.editing) stopEditQuiet();
+    commit(); await flushSaves();
+    await api.put(`/api/decks/${D()}/chapters`, { labels, map });
+    await syncFromDisk(['slides']);
+    renderInspector();
+  } catch (e) { toast(e.message, 'error'); }
+}
+function chaptersPanel() {
+  const labels = deckChapters();
+  if (!labels) return null;
+  const n = labels.length, MAX = 8;
+  const ident = () => labels.map((_, k) => k);
+  const counts = labels.map((_, k) => S.order.filter((id) => slideChapter(id) === String(k + 1)).length);
+  const cur = slideChapter(S.current);
+  const rows = labels.map((label, k) => {
+    const inp = h('input', { type: 'text', value: label, placeholder: `Chapter ${k + 1}` });
+    inp.addEventListener('change', () => { const v = inp.value.trim() || `Chapter ${k + 1}`; if (v === label) return; const next = [...labels]; next[k] = v; applyChapters(next, ident()); });
+    inp.addEventListener('keydown', (e) => { if (e.key === 'Enter') inp.blur(); });
+    const move = (dir) => { const j = k + dir; const next = [...labels]; [next[k], next[j]] = [next[j], next[k]]; const map = ident(); map[k] = j; map[j] = k; applyChapters(next, map); };
+    const remove = () => {
+      if (counts[k] && !confirm(`Remove "${label}"? Its ${counts[k]} slide${counts[k] > 1 ? 's' : ''} move to ${k ? `"${labels[k - 1]}"` : 'no chapter'}.`)) return;
+      const map = ident().map((i) => (i === k ? -1 : i > k ? i - 1 : i));
+      applyChapters(labels.filter((_, i) => i !== k), map);
+    };
+    return h('div', { class: `chapter-row ${cur === String(k + 1) ? 'current' : ''}` },
+      h('span', { class: 'chapter-num', title: cur === String(k + 1) ? 'This slide is in this chapter' : '' }, String(k + 1)),
+      inp,
+      h('span', { class: 'chapter-count muted', title: 'Slides in this chapter' }, String(counts[k])),
+      btn('↑', () => move(-1), { cls: 'icon ghost small', title: 'Move up' }),
+      btn('↓', () => move(1), { cls: 'icon ghost small', title: 'Move down' }),
+      btn('×', remove, { cls: 'icon ghost small', title: 'Remove chapter' }));
+  });
+  rows.forEach((r, k) => { const b = r.querySelectorAll('button'); b[0].disabled = k === 0; b[1].disabled = k === n - 1; b[2].disabled = n === 1; });
+  const add = btn('+ Add chapter', () => applyChapters([...labels, `Chapter ${n + 1}`], ident()), { cls: 'small', title: n >= MAX ? `The theme styles up to ${MAX} chapters` : 'Add a chapter at the end' });
+  add.disabled = n >= MAX;
+  return h('section', { class: 'panel' },
+    h('h4', null, 'Chapters (timeline)'),
+    h('div', { class: 'chapter-list' }, rows),
+    h('div', { class: 'row' }, add),
+    h('div', { class: 'muted', style: { fontSize: '12px', lineHeight: 1.45 } }, 'Changes apply to every slide. Moving or removing a chapter keeps each slide in its chapter. Choose this slide’s chapter in the slide panel above.'));
 }
 
 function commentsPanel() {
