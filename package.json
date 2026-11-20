@@ -1,0 +1,14 @@
+{
+  "name": "html-slides",
+  "version": "0.1.0",
+  "description": "Agent-first HTML slide editor: decks are folders of HTML files that agents and humans edit together.",
+  "type": "module",
+  "private": true,
+  "bin": { "slides": "bin/slides.mjs" },
+  "scripts": {
+    "start": "node server.mjs",
+    "dev": "node server.mjs",
+    "slides": "node bin/slides.mjs"
+  },
+  "engines": { "node": ">=18" }
+}

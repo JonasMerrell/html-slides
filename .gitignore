@@ -1,0 +1,13 @@
+node_modules/
+decks/*/.renders/
+decks/*/.status.json
+*.tmp
+.DS_Store
+
+# Your own decks stay local; only the bundled example is tracked
+decks/*
+!decks/getting-started/
+decks/getting-started/comments.json
+# Local-only agent notes for local themes
+AGENTS.local.md
+.claude/settings.local.json

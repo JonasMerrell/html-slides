@@ -1,0 +1,21 @@
+/* Paper — warm editorial serif on cream, brick-red accent. Good for narrative and research talks. */
+@import url("https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,600;9..144,700&family=Source+Sans+3:wght@400;600;700&family=IBM+Plex+Mono:wght@400;600&display=swap");
+
+.slide {
+  --bg: #f5f0e6;
+  --fg: #2b2620;
+  --head: #1d1915;
+  --muted: #776b5d;
+  --accent: #b4442a;
+  --accent-bg: #2b2620;
+  --on-accent: #f5f0e6;
+  --surface: #ebe3d4;
+  --line: #ddd2bf;
+  --radius: 6px;
+  --font-head: "Fraunces", "Iowan Old Style", Palatino, Georgia, serif;
+  --font-body: "Source Sans 3", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, monospace;
+  --head-weight: 600;
+  --head-tracking: -0.01em;
+  --quote-weight: 400;
+}
