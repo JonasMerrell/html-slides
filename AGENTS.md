@@ -153,6 +153,22 @@ when the slide becomes active. srcdoc rather than a blob URL because it needs no
 has no `file://`/opaque-origin blob quirks, and keeps the text exact: only `&` and `<` are escaped, which keeps
 multi-MB data cheap. Expect the export to grow by roughly the size of each embed folder (a three.js embed with its data slice is typically ~1 MB).
 
+## Several agents at once
+
+Several agents (and the human) can work on one deck at the same time. Every write is atomic, and the editor shows
+each change within a second. To avoid overwriting one another:
+- **Add slides only with `slides add … --after <id>`** (or `--stdin`), and reorder with `slides mv`. Never hand-edit
+  `deck.json`: two agents rewriting it at once can lose each other's order changes. A slide file created directly
+  is appended to the order automatically.
+- **Stay on your own slides:** the ones you created or were assigned. Don't edit another agent's slides or `theme.css`
+  unless that is your task. If you need something changed elsewhere, leave a note:
+  `slides comment <deck> <slide> "…"`.
+- **Re-read a slide file right before you edit it,** and make targeted edits instead of rewriting the whole file
+  from an old copy. Someone may have changed it since you last looked.
+- Use distinct, descriptive slide ids (`--id results-latency`) so parallel agents don't collide.
+- Chapter timelines are deck-wide: change them with `slides toc`, not by editing one slide's `<nav>`.
+- The editor's **Agent** button has a copy-ready "Join this deck" prompt with this repo's absolute paths for starting a new agent.
+
 ## Workflow
 
 1. **Orient**: `slides decks`, `slides outline <deck>`, `slides layouts`.

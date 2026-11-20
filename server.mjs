@@ -4,6 +4,7 @@
 import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
+import os from 'node:os';
 import * as store from './lib/store.mjs';
 import { buildPresentation } from './lib/build.mjs';
 import { buildEmbedDoc } from './lib/embed.mjs';
@@ -106,6 +107,8 @@ route('GET', '/api/events', (req, res) => {
   req.on('close', () => clients.delete(res));
 });
 
+// where the files live, so the editor's "Agent" prompts can give a new agent absolute paths
+route('GET', '/api/info', (req, res) => json(res, { root: store.ROOT, decksDir: store.DECKS_DIR, url: `http://${HOST === '0.0.0.0' ? 'localhost' : HOST}:${PORT}`, host: os.hostname() }));
 route('GET', '/api/decks', (req, res) => json(res, store.listDecks()));
 route('POST', '/api/decks', async (req, res) => {
   const b = await readJson(req);

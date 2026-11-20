@@ -1542,21 +1542,39 @@ function saveLayoutModal() {
   name.focus();
 }
 
-function agentModal() {
-  const d = D() || '<deck>';
+let INFO = null;
+async function agentModal() {
+  INFO ||= await api.get('/api/info').catch(() => ({}));
+  const root = INFO.root || '<repo>', dd = INFO.decksDir || `${root}/decks`;
+  const d = D();
+  const deck = d || '<deck>';
+  const where = `Slide editor repo: ${root}` + (INFO.host ? ` (on ${INFO.host})` : '') + `\n` +
+    `Read ${root}/AGENTS.md first (and AGENTS.local.md if it exists), including "Several agents at once". ` +
+    `Run commands from the repo folder: node bin/slides.mjs help (on CHPC: module load nodejs/22.4.0 first).`;
+  const join = d
+    ? `${where}\n\nYou're joining deck "${d}": ${dd}/${d}/ (slides in slides/<id>.html, order in deck.json, theme "${S.deck?.theme || ''}"). ` +
+      `Other agents and I may be editing the same deck right now; the editor at ${INFO.url || 'http://127.0.0.1:4173'} live-reloads on every save.\n` +
+      `1. Orient: node bin/slides.mjs outline ${d}  and  node bin/slides.mjs layouts ${d}.\n` +
+      `2. Add slides only with the CLI (never hand-edit deck.json): node bin/slides.mjs add ${d} --layout <name> --title "…" --after <id> — it prints the file to write into.\n` +
+      `3. Only edit the slides you create or that I assign to you. Re-read a slide file right before changing it and make targeted edits, not whole-file rewrites.\n` +
+      `4. Check your slides: node bin/slides.mjs check ${d}  and  node bin/slides.mjs render ${d} <id>, look at the PNG, fix, repeat.\n\n` +
+      `Task: <what to add — e.g. 3 slides on X after slide <id>>`
+    : `${where}\n\nDecks live in ${dd}/<deck>/. List them with node bin/slides.mjs decks. Other agents may be editing at the same time; follow the multi-agent rules in AGENTS.md.\n\nTask: <what to do>`;
   const prompts = [
-    ['Create a deck', `Read AGENTS.md, then create a new HTML slide deck about <topic> for <audience>, ~10 slides, theme "clean". Use node bin/slides.mjs to scaffold slides from layouts, write the content directly into the slide files, then run "node bin/slides.mjs check" and "render --sheet" and fix anything that overflows or looks off.`],
-    ['Address my notes', `Address the open slide comments in deck "${d}" (node bin/slides.mjs comments ${d}). Edit the slide files directly, then resolve each comment with a one-line reply describing what you changed.`],
-    ['Review & polish', `Review deck "${d}": run node bin/slides.mjs check ${d} and node bin/slides.mjs render ${d} --sheet, look at the rendered image, then tighten wording, fix overflow and inconsistent styling. Don't change slides I've marked as final in the notes.`],
-    ['Restyle', `Restyle deck "${d}" by editing decks/${d}/theme.css only (colors, fonts, flourishes). Keep layouts intact. Render a sheet before and after.`],
+    ['Join this deck (new agent)', join, true],
+    ['Create a deck', `${where}\n\nCreate a new HTML slide deck about <topic> for <audience>, ~10 slides, theme "clean". Use node bin/slides.mjs to scaffold slides from layouts, write the content directly into the slide files, then run "node bin/slides.mjs check" and "render --sheet" and fix anything that overflows or looks off.`],
+    ['Address my notes', `${where}\n\nAddress the open slide comments in deck "${deck}" (node bin/slides.mjs comments ${deck}). Edit the slide files directly, then resolve each comment with a one-line reply describing what you changed.`],
+    ['Review & polish', `${where}\n\nReview deck "${deck}": run node bin/slides.mjs check ${deck} and node bin/slides.mjs render ${deck} --sheet, look at the rendered image, then tighten wording, fix overflow and inconsistent styling. Don't change slides I've marked as final in the notes.`],
+    ['Restyle', `${where}\n\nRestyle deck "${deck}" by editing ${dd}/${deck}/theme.css only (colors, fonts, flourishes). Keep layouts intact. Render a sheet before and after.`],
   ];
   modal({
-    title: 'Working with an agent',
+    title: 'Working with agents',
+    wide: true,
     body: h('div', { style: { display: 'flex', flexDirection: 'column', gap: '14px' } },
-      h('div', { class: 'muted', style: { lineHeight: 1.5 } }, 'Agents edit the same files you do — this editor live-reloads when they save. Run your agent (Claude Code, etc.) in this project folder and paste a prompt:'),
-      prompts.map(([t, p]) => h('div', { class: 'comment' },
-        h('div', { class: 'row' }, h('b', { style: { flex: 1 } }, t), btn('Copy', () => copy(p), { cls: 'small', ic: 'copy' })),
-        h('div', { class: 'body muted' }, p)))),
+      h('div', { class: 'muted', style: { lineHeight: 1.5 } }, 'Agents edit the same files you do, and this editor live-reloads when they save. Several agents can work on one deck at once. Start each one anywhere (Claude Code, etc.) and paste a prompt. It says where the files are, so the agent can run in any folder:'),
+      prompts.map(([t, p, main]) => h('div', { class: 'comment' },
+        h('div', { class: 'row' }, h('b', { style: { flex: 1 } }, t), btn('Copy', () => copy(p), { cls: main ? 'small primary' : 'small', ic: 'copy' })),
+        h('div', { class: 'body muted', style: { whiteSpace: 'pre-wrap' } }, p)))),
   });
 }
 
