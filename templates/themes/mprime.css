@@ -1,4 +1,4 @@
-/* Drafting — minimal research-talk theme on light grey paper: condensed display titles and IBM Plex type. The frame is just a section timeline across the top, logos in the top corners, and the slide number and talk timer along the bottom. Derived from the "Certification by Analysis" deck. */
+/* mPRIME — minimal U of U / mPRIME research-talk theme on light grey paper: condensed display titles and IBM Plex type. The frame is just a section timeline across the top, logos in the top corners, and the slide number and talk timer along the bottom. Derived from the "Certification by Analysis" deck. */
 
 @font-face { font-family: "Big Shoulders Display"; font-weight: 700 800; font-display: swap; src: url("assets/fonts/big-shoulders-display-700-800.woff2") format("woff2"); }
 @font-face { font-family: "IBM Plex Sans"; font-weight: 400 700; font-display: swap; src: url("assets/fonts/ibm-plex-sans-400-700.woff2") format("woff2"); }

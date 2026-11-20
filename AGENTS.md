@@ -18,7 +18,7 @@ decks/<deck>/
   assets/embeds/<n>/ interactive embeds (see "Interactive embeds" below)
   comments.json      notes from the human (use the CLI to read/resolve them)
 templates/layouts/   starting layouts (title, bullets, two-col, cards, stats, quote, ...)
-templates/themes/    base themes (clean, midnight, paper, drafting, plus any local ones)
+templates/themes/    base themes (clean, midnight, paper, mprime, plus any local ones)
 templates/embed/     starting point for a new embed (`slides embed`)
 core/slides.css      layout classes shared by all themes (read it to see what exists)
 ```
@@ -56,7 +56,7 @@ A theme can include its own layouts in `templates/layouts/<theme>/`, which repla
 If that folder contains a `.exclusive` file, decks using the theme get only those layouts.
 Run `slides layouts <deck>` to see what's available for a deck. `slides add` picks the right version automatically.
 
-### `drafting` theme (U of U mPRIME research talks)
+### `mprime` theme (U of U / mPRIME research talks)
 Layouts: `title`, `content`, `split` (text | figure), `blank`. The frame is deliberately minimal:
 - **Timeline:** content slides each carry the same `<nav class="toc">…</nav>`. Setting `data-section="N"` on the
   section highlights item N and marks the earlier ones as done. If you rename a section, update the nav on every slide

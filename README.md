@@ -39,8 +39,8 @@ On a remote machine, forward the port with `ssh -L 4173:127.0.0.1:4173 host`, or
 | `decks/<deck>/theme.css` | the deck's own theme (copied from a template, edit freely) |
 | `decks/<deck>/comments.json` | human ↔ agent notes |
 | `templates/layouts/` | slide layouts (title, agenda, bullets, two-col, cards, image-right, image-full, stats, quote, code, closing, blank). Add your own with **Save as layout** in the editor |
-| `templates/themes/` | base themes: `clean`, `midnight`, `paper`, `drafting` (fonts and other theme assets live in `templates/themes/assets/` and are copied into a deck when the theme is applied) |
-| `templates/layouts/<theme>/` | layouts that belong to one theme (e.g. `drafting`) and replace the general layouts with the same name |
+| `templates/themes/` | base themes: `clean`, `midnight`, `paper`, `mprime` (fonts and other theme assets live in `templates/themes/assets/` and are copied into a deck when the theme is applied) |
+| `templates/layouts/<theme>/` | layouts that belong to one theme (e.g. `mprime`) and replace the general layouts with the same name |
 | `core/slides.css` | the layout classes and utilities that every theme builds on |
 
 Interactive pieces (sliders, live charts, three.js views) are **embeds**: self-contained pages under
