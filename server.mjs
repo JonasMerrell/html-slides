@@ -56,23 +56,30 @@ async function readJson(req) {
 // and catches edits made by agents, editors, git checkouts, anything.
 const clients = new Set();
 let snapshot = new Map();
-function scan() {
-  const next = new Map();
+// Asynchronous and never overlapping: on a slow network filesystem one scan can take seconds,
+// and a synchronous scan on a timer would then block every request (thumbnails stay black, saves hang).
+const FS_JOBS = 4; // stat() calls in flight at once; leaves libuv threads free for requests
+async function scan() {
+  const fsp = fs.promises, next = new Map(), paths = [];
   let decks = [];
-  try { decks = fs.readdirSync(store.DECKS_DIR, { withFileTypes: true }).filter((e) => e.isDirectory()); } catch {}
-  for (const e of decks) {
+  try { decks = (await fsp.readdir(store.DECKS_DIR, { withFileTypes: true })).filter((e) => e.isDirectory()); } catch {}
+  await Promise.all(decks.map(async (e) => {
     const dir = path.join(store.DECKS_DIR, e.name);
-    const files = ['deck.json', 'theme.css', 'comments.json'];
-    try { for (const f of fs.readdirSync(path.join(dir, 'slides'))) if (f.endsWith('.html') && !f.startsWith('.')) files.push('slides/' + f); } catch {}
-    try { for (const f of fs.readdirSync(path.join(dir, 'assets'))) if (!f.startsWith('.')) files.push('assets/' + f); } catch {}
-    for (const f of files) {
-      try { const st = fs.statSync(path.join(dir, f)); next.set(`${e.name}/${f}`, `${st.mtimeMs}:${st.size}`); } catch {}
+    const ls = async (sub) => { try { return (await fsp.readdir(path.join(dir, sub))).filter((f) => !f.startsWith('.')); } catch { return []; } };
+    const [slides, assets] = await Promise.all([ls('slides'), ls('assets')]);
+    for (const f of ['deck.json', 'theme.css', 'comments.json', ...slides.filter((f) => f.endsWith('.html')).map((f) => 'slides/' + f), ...assets.map((f) => 'assets/' + f)]) paths.push([e.name, f]);
+  }));
+  let i = 0;
+  await Promise.all(Array.from({ length: FS_JOBS }, async () => {
+    while (i < paths.length) {
+      const [deck, f] = paths[i++];
+      try { const st = await fsp.stat(path.join(store.DECKS_DIR, deck, f)); next.set(`${deck}/${f}`, `${st.mtimeMs}:${st.size}`); } catch {}
     }
-  }
+  }));
   return next;
 }
-function poll() {
-  const next = scan();
+async function poll() {
+  const next = await scan();
   const changed = new Map();
   const mark = (key) => {
     const [deck, ...rest] = key.split('/');
@@ -88,8 +95,14 @@ function broadcast(msg) {
   const data = `data: ${JSON.stringify(msg)}\n\n`;
   for (const res of clients) res.write(data);
 }
-snapshot = scan();
-setInterval(poll, 700).unref();
+// next scan starts 700 ms after the previous one finished
+(async function loop() {
+  snapshot = await scan();
+  for (;;) {
+    await new Promise((r) => setTimeout(r, 700).unref());
+    try { await poll(); } catch (e) { console.error('scan failed:', e.message); }
+  }
+})();
 setInterval(() => { for (const res of clients) res.write(': ping\n\n'); }, 25000).unref();
 
 // ------------------------------------------------------------ routes

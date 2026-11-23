@@ -291,26 +291,41 @@ function fitStage() {
 }
 
 // ============================================================ slide list
-const thumbs = new Map(); // id -> { el, iframe }
+const thumbs = new Map(); // id -> { el, iframe, badges, num, html }
+// Keeps the thumbnails that are still there (same element, no reload). Rebuilding every iframe after a delete
+// or reorder made them all blank until each one reloaded, which on a slow disk took seconds.
 function renderList() {
-  thumbs.clear();
-  E.list.replaceChildren(...S.order.map((id, i) => {
-    const f = frame(S.html[id]);
-    const iframe = f.firstElementChild;
-    const badges = h('div', { class: 'badges' });
-    const el = h('div', { class: 'thumb', draggable: true, 'data-id': id, title: id, onclick: () => selectSlide(id) },
-      h('span', { class: 'num' }, i + 1), f, badges,
-      h('div', { class: 'actions' },
-        h('button', { title: 'Duplicate slide', onclick: (e) => { e.stopPropagation(); duplicateSlide(id); } }, icon('copy')),
-        h('button', { title: 'Delete slide', onclick: (e) => { e.stopPropagation(); deleteSlide(id); } }, icon('trash'))));
-    iframe.addEventListener('load', () => measureThumb(id, iframe));
-    wireThumbDrag(el, id);
-    thumbs.set(id, { el, iframe, badges });
-    return el;
-  }));
+  if (!E.list.isConnected || [...thumbs.values()].some((t) => !E.list.contains(t.el))) { thumbs.clear(); E.list.replaceChildren(); }
+  const want = new Set(S.order);
+  for (const [id, t] of thumbs) if (!want.has(id)) { t.el.remove(); thumbs.delete(id); }
+  let cursor = E.list.firstElementChild;
+  S.order.forEach((id, i) => {
+    let t = thumbs.get(id);
+    if (!t) t = makeThumb(id);
+    else if (t.html !== S.html[id]) { t.html = S.html[id]; updateThumb(id); }
+    t.num.textContent = i + 1;
+    if (t.el === cursor) cursor = cursor.nextElementSibling;
+    else E.list.insertBefore(t.el, cursor); // only moved or new thumbnails (re)load
+  });
   updateBadges();
   highlightThumb();
   requestAnimationFrame(() => fitFrames(E.list));
+}
+function makeThumb(id) {
+  const f = frame(S.html[id]);
+  const iframe = f.firstElementChild;
+  const badges = h('div', { class: 'badges' });
+  const num = h('span', { class: 'num' });
+  const el = h('div', { class: 'thumb', draggable: true, 'data-id': id, title: id, onclick: () => selectSlide(id) },
+    num, f, badges,
+    h('div', { class: 'actions' },
+      h('button', { title: 'Duplicate slide', onclick: (e) => { e.stopPropagation(); duplicateSlide(id); } }, icon('copy')),
+      h('button', { title: 'Delete slide', onclick: (e) => { e.stopPropagation(); deleteSlide(id); } }, icon('trash'))));
+  iframe.addEventListener('load', () => measureThumb(id, iframe));
+  wireThumbDrag(el, id);
+  const t = { el, iframe, badges, num, html: S.html[id] };
+  thumbs.set(id, t);
+  return t;
 }
 
 function highlightThumb() {
@@ -334,6 +349,7 @@ function updateThumb(id) {
   thumbTimers[id] = setTimeout(() => {
     const t = thumbs.get(id);
     if (!t) return;
+    t.html = S.html[id];
     const body = t.iframe.contentDocument?.body;
     if (body) { body.innerHTML = S.html[id]; measureThumb(id, t.iframe); } else t.iframe.srcdoc = slideDoc(S.html[id]);
   }, 250);
