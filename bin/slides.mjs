@@ -26,6 +26,10 @@ Slides
   slides mv <deck> <slide> (--after ID | --at N | --first)
   slides rename <deck> <slide> <new-id>
   slides order <deck> <id> <id> ...              set full slide order
+  slides history <deck> <slide> [--show V]       earlier versions of a slide (every save, CLI write and direct
+                                                 file edit is kept, last ${store.HISTORY_MAX}); --show prints one
+  slides restore <deck> <slide> <version>        put a version back (by id, unique prefix, or -1 = the one
+                                                 before the current); the restore can itself be undone
   slides toc <deck>                              show the section timeline and each slide's chapter
   slides toc <deck> --set "A|B|C" | --sync [--from ID]
                                                  relabel the timeline on every slide, or copy one slide's to all
@@ -214,6 +218,28 @@ async function main() {
       return;
     }
 
+    case 'history': {
+      const d = need(rest[0], 'deck name'), id = need(rest[1], 'slide id');
+      if (typeof opt.show === 'string') { process.stdout.write(store.readVersion(d, id, store.resolveVersion(d, id, opt.show))); return; }
+      const cur = fs.existsSync(store.slidePath(d, id)) ? fs.readFileSync(store.slidePath(d, id), 'utf8') : null;
+      const vs = store.listVersions(d, id);
+      if (!vs.length) { console.log(`No history for "${id}" yet (it starts with the first change made through the editor or CLI).`); return; }
+      const SRC = { original: 'original', editor: 'editor (human)', cli: 'agent via CLI', file: 'file edit', timeline: 'timeline sync', restore: 'restore' };
+      vs.forEach((v, k) => {
+        const isCur = k === vs.length - 1 && cur != null && store.readVersion(d, id, v.id) === cur;
+        console.log(`${v.id.padEnd(24)}${new Date(v.time).toLocaleString()}  ${(SRC[v.source] || v.source).padEnd(15)} ${String(v.size ?? '?').padStart(6)} B${isCur ? '  ← current' : ''}`);
+      });
+      console.log(`\nView one: slides history ${d} ${id} --show <version>   Put one back: slides restore ${d} ${id} <version>`);
+      return;
+    }
+
+    case 'restore': {
+      const d = need(rest[0], 'deck name'), id = need(rest[1], 'slide id');
+      const v = store.restoreVersion(d, id, need(rest[2], 'version (see: slides history)'));
+      console.log(`Restored ${id} to ${v} (undo with: slides restore ${d} ${id} -1)`);
+      return;
+    }
+
     case 'comments': {
       const d = need(rest[0], 'deck name');
       const all = store.readComments(d);
@@ -224,7 +250,7 @@ async function main() {
     case 'resolve': {
       const d = need(rest[0], 'deck name');
       const c = store.updateComment(d, need(rest[1], 'comment id'), { status: 'resolved', ...(typeof opt.reply === 'string' ? { reply: opt.reply } : {}) });
-      console.log(`Resolved ${c.id}`);
+      console.log(`Resolved ${c.id}${c.change ? ` (change on ${c.slide}: ${c.change.before} → ${c.change.after})` : ''}`);
       return;
     }
 

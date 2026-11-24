@@ -177,6 +177,17 @@ each change within a second. To avoid overwriting one another:
 - Chapter timelines are deck-wide: change them with `slides toc`, not by editing one slide's `<nav>`.
 - The editor's **Agent** button has a copy-ready "Join this deck" prompt with this repo's absolute paths for starting a new agent.
 
+## Slide history (undo across agents)
+
+Every version of a slide is kept in `decks/<deck>/.history/<id>/` (last 50): saves in the editor, CLI writes, and
+direct file edits (picked up by the editor server, and by `slides comment` / `slides resolve`). Don't edit that folder.
+- `slides history <deck> <slide>` lists versions (time, who: editor / agent via CLI / file edit / restore);
+  `--show <version>` prints one.
+- `slides restore <deck> <slide> <version>` puts one back (`-1` = the version before the current one). A restore is
+  itself a new version, so it can be undone. If you broke a slide, or overwrote someone else's change, restore it.
+- When you `slides resolve` a note, the slide as it was when the note was left and as it is now are stored on the
+  note, and the human sees a before/after **See change** view. Make the edit first, then resolve.
+
 ## Workflow
 
 1. **Orient**: `slides decks`, `slides outline <deck>`, `slides layouts`.

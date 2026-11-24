@@ -61,6 +61,7 @@ const ICONS = {
   alignC: '<path d="M4 6h16M7 10h10M4 14h16M7 18h10"/>',
   alignR: '<path d="M4 6h16M10 10h10M4 14h16M10 18h10"/>',
   up: '<path d="M18 15l-6-6-6 6"/>',
+  history: '<path d="M3 12a9 9 0 109-9 9 9 0 00-6.4 2.6L3 8"/><path d="M3 3v5h5M12 7v5l3 3"/>',
   reset: '<path d="M3 12a9 9 0 109-9 9 9 0 00-6.4 2.6L3 8"/><path d="M3 3v5h5"/>',
   pin: '<path d="M12 21s-6-5.5-6-11a6 6 0 0112 0c0 5.5-6 11-6 11z"/><circle cx="12" cy="10" r="2"/>',
   sun: '<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>',
@@ -1262,6 +1263,7 @@ function openViewNote(c) {
     h('div', { class: 'text' }, c.text),
     c.reply ? h('div', { class: 'reply' }, c.reply) : null,
     h('div', { class: 'acts' },
+      c.change && resolved ? btn('See change', () => historyModal(c.slide, { a: c.change.before, b: c.change.after, note: c }), { cls: 'small ghost', ic: 'history', title: 'The slide when this note was left vs. when it was resolved' }) : null,
       btn('', async () => { await api.del(`/api/decks/${D()}/comments/${c.id}`); S.comments = S.comments.filter((x) => x.id !== c.id); closePop(); renderInspector(); updateBadges(); }, { cls: 'small ghost icon', ic: 'trash', title: 'Delete note' }),
       btn('Close', () => closePop(), { cls: 'small ghost' }),
       btn('Resolve', () => update({ status: 'resolved' }), { cls: 'small primary' })));
@@ -1458,6 +1460,7 @@ function slidePanel() {
     h('div', { class: 'row wrap' },
       btn('Edit HTML', () => htmlModal(), { cls: 'small', ic: 'code' }),
       btn('Save as layout', () => saveLayoutModal(), { cls: 'small', title: 'Reuse this slide as a template layout' }),
+      btn('History', () => historyModal(id), { cls: 'small', ic: 'history', title: 'Earlier versions of this slide (every save and agent edit is kept); compare and restore' }),
       btn('Duplicate', () => duplicateSlide(id), { cls: 'small' }),
       btn('Delete', () => deleteSlide(id), { cls: 'small danger' })));
 }
@@ -1570,6 +1573,7 @@ function commentView(c) {
     h('div', { class: 'body' }, c.text),
     c.reply ? h('div', { class: 'reply' }, c.reply) : null,
     h('div', { class: 'acts' },
+      c.change && resolved ? btn('See change', () => historyModal(c.slide, { a: c.change.before, b: c.change.after, note: c }), { cls: 'small ghost', ic: 'history', title: 'The slide when this note was left vs. when it was resolved' }) : null,
       btn(resolved ? 'Reopen' : 'Resolve', () => update({ status: resolved ? 'open' : 'resolved' }), { cls: 'small ghost' }),
       btn('', async () => { await api.del(`/api/decks/${D()}/comments/${c.id}`); S.comments = S.comments.filter((x) => x.id !== c.id); renderInspector(); updateBadges(); renderMarkers(); }, { cls: 'small ghost icon', ic: 'trash', title: 'Delete note' })));
 }
@@ -1577,6 +1581,80 @@ function commentView(c) {
 async function copy(text) {
   try { await navigator.clipboard.writeText(text); toast('Copied', 'ok'); }
   catch { const ta = h('textarea', { style: { position: 'fixed', opacity: 0 } }); ta.value = text; document.body.append(ta); ta.select(); document.execCommand('copy'); ta.remove(); toast('Copied', 'ok'); }
+}
+
+
+// ============================================================ slide history
+// decks/<deck>/.history/<id>/: every save, CLI write and direct file edit (server/store keep them).
+const SRC_LABEL = { original: 'Original', editor: 'You (editor)', cli: 'Agent (CLI)', file: 'File edit (agent)', timeline: 'Timeline sync', restore: 'Restored' };
+const ago = (t) => {
+  const s = Math.round((Date.now() - t) / 1000);
+  if (s < 60) return 'just now';
+  if (s < 3600) return `${Math.round(s / 60)} min ago`;
+  if (s < 86400) return `${Math.round(s / 3600)} h ago`;
+  return new Date(t).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+};
+/** CSS outlining what differs between two versions of a slide (by data-id, innermost changed elements). */
+function diffCss(aHtml, bHtml) {
+  const A = parseSlide(aHtml), B = parseSlide(bHtml);
+  const map = (root) => new Map([...root.querySelectorAll('[data-id]')].map((e) => [e.dataset.id, e]));
+  const ma = map(A), mb = map(B);
+  const changed = (id) => !ma.has(id) || !mb.has(id) || ma.get(id).outerHTML !== mb.get(id).outerHTML;
+  const inner = (m) => [...m.keys()].filter((id) => changed(id) && ![...m.get(id).querySelectorAll('[data-id]')].some((c) => changed(c.dataset.id)));
+  const rule = (ids) => ids.map((id) => `.slide [data-id="${CSS.escape(id)}"]`).join(',');
+  const css = (ids) => (ids.length ? `${rule(ids)}{outline:5px solid #ff9800!important;outline-offset:6px}` : '');
+  return { a: css(inner(ma)), b: css(inner(mb)) };
+}
+async function historyModal(id, { a = null, b = null, note = null } = {}) {
+  await flushSaves();
+  let list;
+  try { list = await api.get(`/api/decks/${D()}/slides/${id}/history`); } catch (e) { return toast(e.message, 'error'); }
+  if (!list.length) return toast('No history for this slide yet: it starts with the first change.', '');
+  const cache = {};
+  const get = async (v) => (v === 'now' ? S.html[id] : (cache[v] ??= (await api.get(`/api/decks/${D()}/slides/${id}/history/${v}`)).html));
+  const newest = list[list.length - 1].id;
+  const curIsNewest = norm(await get(newest)) === norm(S.html[id]);
+  let left = a || (list.length > 1 ? list[list.length - 2].id : newest), right = b || 'now';
+  const ul = h('div', { class: 'hist-list' });
+  const paneA = h('div', { class: 'hist-pane' }), paneB = h('div', { class: 'hist-pane' });
+  const label = (v) => (v === 'now' ? '(the slide as it is)' : `${SRC_LABEL[list.find((x) => x.id === v)?.source] || v} · ${ago(list.find((x) => x.id === v)?.time)}`);
+  const restoreBtn = btn('Restore this version', () => doRestore(), { cls: 'primary', ic: 'history' });
+  async function draw() {
+    const [ha, hb] = await Promise.all([get(left), get(right)]);
+    const d = diffCss(ha, hb);
+    const same = norm(ha) === norm(hb);
+    paneA.replaceChildren(h('div', { class: 'hist-cap' }, h('b', null, note ? 'Before' : 'Selected'), ' ', label(left)), frame(ha, { css: d.a }));
+    paneB.replaceChildren(h('div', { class: 'hist-cap' }, h('b', null, note ? 'After' : 'Now'), ' ', label(right), same ? h('span', { class: 'muted' }, ' · identical') : null), frame(hb, { css: d.b }));
+    requestAnimationFrame(() => fitFrames(m.el));
+    for (const r of ul.children) r.classList.toggle('active', r.dataset.v === left);
+    restoreBtn.disabled = norm(ha) === norm(S.html[id]);
+  }
+  [...list].reverse().forEach((v) => {
+    const isCur = v.id === newest && curIsNewest;
+    ul.append(h('div', { class: 'hist-row', 'data-v': v.id, title: v.id, onclick: () => { left = v.id; right = note ? right : 'now'; draw(); } },
+      h('span', { class: `hist-src src-${v.source}` }, SRC_LABEL[v.source] || v.source),
+      h('span', { class: 'muted' }, ago(v.time)),
+      isCur ? h('span', { class: 'hist-now' }, 'current') : null,
+      note && v.id === note.change.before ? h('span', { class: 'hist-now' }, 'note left') : null,
+      note && v.id === note.change.after ? h('span', { class: 'hist-now' }, 'resolved') : null));
+  });
+  async function doRestore() {
+    try {
+      const r = await api.post(`/api/decks/${D()}/slides/${id}/history/${left}/restore`);
+      S.saved[id] = r.html;
+      applyExternal(id, r.html);
+      toast('Restored (you can undo, or restore the newer version from History)', 'ok');
+      m.close();
+    } catch (e) { toast(e.message, 'error'); }
+  }
+  const m = modal({
+    title: note ? `Change for note ${note.id} — ${id}` : `History — ${id}`, wide: true,
+    body: h('div', { class: 'hist' }, ul, h('div', { class: 'hist-compare' }, paneA, paneB),
+      h('div', { class: 'hist-help muted' }, 'Orange outlines mark what changed. Every save, agent CLI write and direct file edit is kept (last 50 per slide). Restoring adds a new version, so it can be undone.')),
+    actions: [btn('Close', () => m.close()), restoreBtn],
+  });
+  m.el.querySelector('.modal').classList.add('hist-modal');
+  draw();
 }
 
 // ============================================================ modals

@@ -1,6 +1,7 @@
 node_modules/
 decks/*/.renders/
 decks/*/.status.json
+decks/*/.history/
 *.tmp
 .DS_Store
 

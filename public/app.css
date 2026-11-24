@@ -261,3 +261,19 @@ input[type=color] { width: 30px; height: 30px; padding: 2px; border: 1px solid v
 .step-card .badge { position: absolute; right: 3px; top: 3px; background: var(--warn); color: #1b1b1b; }
 .badge.steps { background: #7c4dff; }
 .step-tag { margin-left: 6px; font-size: 10.5px; font-weight: 700; color: #7c4dff; background: rgba(124,77,255,.12); border-radius: 8px; padding: 1px 6px; }
+
+/* slide history */
+.modal.hist-modal { width: min(1500px, calc(100vw - 40px)); }
+.hist { display: grid; grid-template-columns: 230px 1fr; gap: 14px; align-items: start; }
+.hist-list { max-height: 62vh; overflow: auto; display: flex; flex-direction: column; gap: 2px; border-right: 1px solid var(--line); padding-right: 8px; }
+.hist-row { display: flex; flex-wrap: wrap; gap: 2px 8px; align-items: baseline; padding: 7px 8px; border-radius: 7px; cursor: pointer; font-size: 12.5px; }
+.hist-row:hover { background: var(--line); }
+.hist-row.active { background: color-mix(in srgb, var(--accent, #4f7cff) 18%, transparent); }
+.hist-src { font-weight: 600; flex: 1 0 100%; }
+.hist-src.src-cli, .hist-src.src-file { color: #7c4dff; }
+.hist-now { font-size: 10.5px; padding: 1px 6px; border-radius: 9px; background: var(--line-2); }
+.hist-compare { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; min-width: 0; }
+.hist-pane { min-width: 0; }
+.hist-cap { font-size: 12.5px; margin-bottom: 6px; }
+.hist-help { grid-column: 2; font-size: 12px; }
+@media (max-width: 900px) { .hist { grid-template-columns: 1fr; } .hist-list { max-height: 24vh; border-right: 0; } .hist-compare { grid-template-columns: 1fr; } .hist-help { grid-column: 1; } }

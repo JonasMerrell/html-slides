@@ -26,7 +26,9 @@ On a remote machine, forward the port with `ssh -L 4173:127.0.0.1:4173 host`, or
    - reorder slides by dragging thumbnails; ⌘Z / ⌘⇧Z undo and redo (agent edits are in the undo history too)
 3. **You leave notes** pinned to elements ("make this punchier"). Then tell the agent
    *"address the open comments in deck X"*. It runs `slides comments`, edits the files and
-   resolves each note with a reply, and you watch the slides update live.
+   resolves each note with a reply, and you watch the slides update live. A resolved note has a
+   **See change** button that shows the slide before and after, and every slide has a **History**
+   (every save and agent edit is kept, with restore).
 4. **Present / export.** **Present** opens a live presentation (arrow keys, `F` fullscreen,
    `N` speaker notes; timeline items link to their chapter, double-click the slide number to jump to a slide).
    **Export** downloads one self-contained `.html` file (print it to PDF if needed).
@@ -39,6 +41,7 @@ On a remote machine, forward the port with `ssh -L 4173:127.0.0.1:4173 host`, or
 | `decks/<deck>/deck.json` | title, theme, slide order |
 | `decks/<deck>/theme.css` | the deck's own theme (copied from a template, edit freely) |
 | `decks/<deck>/comments.json` | human ↔ agent notes |
+| `decks/<deck>/.history/<id>/` | earlier versions of each slide (last 50; not tracked by git) |
 | `templates/layouts/` | slide layouts (title, agenda, bullets, two-col, cards, image-right, image-full, stats, quote, code, closing, blank). Add your own with **Save as layout** in the editor |
 | `templates/themes/` | base themes: `clean`, `midnight`, `paper`, `mprime` (fonts and other theme assets live in `templates/themes/assets/` and are copied into a deck when the theme is applied) |
 | `templates/layouts/<theme>/` | layouts that belong to one theme (e.g. `mprime`) and replace the general layouts with the same name |

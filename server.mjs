@@ -14,6 +14,7 @@ const argVal = (k, d) => { const i = args.indexOf(k); return i >= 0 ? args[i + 1
 const PORT = Number(argVal('--port', process.env.PORT || 4173));
 const HOST = argVal('--host', process.env.HOST || '127.0.0.1');
 const PUBLIC = path.join(store.ROOT, 'public');
+store.setWriter('editor'); // slide history: saves through this server come from the editor
 
 const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.mjs': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.json': 'application/json', '.svg': 'image/svg+xml', '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif', '.webp': 'image/webp', '.avif': 'image/avif', '.ico': 'image/x-icon', '.woff2': 'font/woff2', '.woff': 'font/woff', '.mp4': 'video/mp4', '.webm': 'video/webm', '.pdf': 'application/pdf' };
 
@@ -89,8 +90,18 @@ async function poll() {
   for (const [k, v] of next) if (snapshot.get(k) !== v) mark(k);
   for (const k of snapshot.keys()) if (!next.has(k)) mark(k);
   snapshot = next;
-  for (const [deck, files] of changed) broadcast({ deck, files });
+  for (const [deck, files] of changed) {
+    broadcast({ deck, files });
+    // a slide file changed on disk: keep it in the slide's history (no-op when the store already recorded it)
+    for (const f of files) {
+      const m = f.match(/^slides\/(.+)\.html$/);
+      if (m && store.NAME_RE.test(m[1]) && next.has(`${deck}/${f}`)) queueHistory(deck, m[1]);
+    }
+  }
 }
+// history writes run one at a time, after the response/broadcast, so the poller and requests never wait on them
+let historyChain = Promise.resolve();
+const queueHistory = (deck, id, opts) => { historyChain = historyChain.then(() => store.recordFromDisk(deck, id, opts)).catch(() => {}); };
 function broadcast(msg) {
   const data = `data: ${JSON.stringify(msg)}\n\n`;
   for (const res of clients) res.write(data);
@@ -129,7 +140,11 @@ route('POST', '/api/decks', async (req, res) => {
   store.createDeck(name, { title: b.title, theme: b.theme || 'clean' });
   json(res, { name }, 201);
 });
-route('GET', '/api/decks/:d', (req, res, p) => json(res, store.readDeck(p.d)));
+route('GET', '/api/decks/:d', (req, res, p) => {
+  const deck = store.readDeck(p.d);
+  json(res, deck);
+  for (const s of deck.slides) queueHistory(p.d, s.id, { onlyIfNone: true }); // first copy of each slide, so the first change can be undone
+});
 route('PUT', '/api/decks/:d', async (req, res, p) => json(res, store.updateDeck(p.d, await readJson(req))));
 
 route('POST', '/api/decks/:d/slides', async (req, res, p) => {
@@ -142,6 +157,12 @@ route('PUT', '/api/decks/:d/slides/:id', async (req, res, p) => {
   if (typeof b.html !== 'string') throw new store.UserError('html (string) is required');
   store.writeSlide(p.d, p.id, b.html);
   json(res, { ok: true });
+});
+route('GET', '/api/decks/:d/slides/:id/history', (req, res, p) => json(res, store.listVersions(p.d, p.id)));
+route('GET', '/api/decks/:d/slides/:id/history/:v', (req, res, p) => json(res, { id: p.v, html: store.readVersion(p.d, p.id, p.v) }));
+route('POST', '/api/decks/:d/slides/:id/history/:v/restore', (req, res, p) => {
+  const v = store.restoreVersion(p.d, p.id, p.v);
+  json(res, { restored: v, html: store.readSlide(p.d, p.id) });
 });
 route('DELETE', '/api/decks/:d/slides/:id', (req, res, p) => { store.deleteSlide(p.d, p.id); json(res, { ok: true }); });
 route('POST', '/api/decks/:d/slides/:id/duplicate', (req, res, p) => json(res, { id: store.duplicateSlide(p.d, p.id) }, 201));
