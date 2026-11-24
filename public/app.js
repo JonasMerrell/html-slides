@@ -66,6 +66,15 @@ const ICONS = {
   reset: '<path d="M3 12a9 9 0 109-9 9 9 0 00-6.4 2.6L3 8"/><path d="M3 3v5h5"/>',
   pin: '<path d="M12 21s-6-5.5-6-11a6 6 0 0112 0c0 5.5-6 11-6 11z"/><circle cx="12" cy="10" r="2"/>',
   sun: '<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>',
+  search: '<circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/>',
+  aLeft: '<path d="M4 3v18M8 7h12v4H8zM8 14h7v4H8z"/>',
+  aCenterH: '<path d="M12 3v18M6 7h12v4H6zM8.5 14h7v4h-7z"/>',
+  aRight: '<path d="M20 3v18M4 7h12v4H4zM9 14h7v4H9z"/>',
+  aTop: '<path d="M3 4h18M7 8h4v12H7zM14 8h4v7h-4z"/>',
+  aMiddle: '<path d="M3 12h18M7 6h4v12H7zM14 8.5h4v7h-4z"/>',
+  aBottom: '<path d="M3 20h18M7 4h4v12H7zM14 9h4v7h-4z"/>',
+  dH: '<path d="M3 4v16M21 4v16M8 8h3v8H8zM13 8h3v8h-3z"/>',
+  dV: '<path d="M4 3h16M4 21h16M8 8h8v3H8zM8 13h8v3H8z"/>',
   moon: '<path d="M21 12.8A9 9 0 1111.2 3a7 7 0 009.8 9.8z"/>',
 };
 const icon = (n) => { const s = document.createElementNS('http://www.w3.org/2000/svg', 'svg'); s.setAttribute('viewBox', '0 0 24 24'); s.setAttribute('fill', 'none'); s.setAttribute('stroke', 'currentColor'); s.setAttribute('stroke-width', '2'); s.setAttribute('stroke-linecap', 'round'); s.setAttribute('stroke-linejoin', 'round'); s.innerHTML = ICONS[n]; return s; };
@@ -85,6 +94,7 @@ const uiThemeBtn = () => h('button', { class: 'btn icon ghost ui-theme-btn', tit
 const W = 1920, H = 1080;
 const S = {
   view: null,
+  group: [],           // several selected elements (⇧click / marquee); S.sel is the last one
   deck: null,          // { name, title, theme }
   order: [],           // slide ids
   html: {},            // id -> current html (local truth)
@@ -97,6 +107,7 @@ const S = {
 };
 const E = {}; // editor DOM refs
 const D = () => S.deck?.name;
+import { findInHtml, queryRegex } from '/lib/textfind.mjs';
 
 // ============================================================ slide documents
 const EDIT_CSS = `.slide [data-build]{outline:2px dashed rgba(124,77,255,.55);outline-offset:3px}.slide{cursor:default}.slide [contenteditable]{outline:none;cursor:text}::selection{background:rgba(79,124,255,.35)}body.note-mode .slide,body.note-mode .slide *{cursor:crosshair!important}`;
@@ -454,6 +465,7 @@ function buildEditor() {
     E.noteBtn = btn('Note', () => setNoteMode(!S.noteMode), { ic: 'pin', title: 'Note tool (N): click anywhere on the slide to leave a note for the agent' }),
     h('div', { class: 'sep' }), E.undoBtn, E.redoBtn, h('div', { class: 'sep' }),
     themeSel,
+    btn('Find', () => openFind(), { ic: 'search', title: 'Find and replace in every slide (⌘F / ⌘H)' }),
     btn('CSS', () => themeCssModal(), { ic: 'palette', title: "Edit this deck's theme.css" }),
     btn('Agent', () => agentModal(), { ic: 'bot', title: 'Prompts for working with an agent' }),
     h('div', { class: 'sep' }),
@@ -472,7 +484,9 @@ function buildEditor() {
   E.gv = h('div', { class: 'guide v', hidden: true });
   E.gh = h('div', { class: 'guide h', hidden: true });
   E.markers = h('div');
-  E.overlay = h('div', { class: 'overlay' }, E.hover, E.sel, E.gv, E.gh, E.markers);
+  E.multi = h('div');
+  E.marquee = h('div', { class: 'marquee', hidden: true });
+  E.overlay = h('div', { class: 'overlay' }, E.hover, E.multi, E.sel, E.gv, E.gh, E.marquee, E.markers);
   E.slidebox = h('div', { class: 'slidebox' }, E.iframe, E.overlay);
   E.stage = h('div', { class: 'stage' }, E.slidebox);
   E.status = h('div', { class: 'stage-status' });
@@ -481,11 +495,11 @@ function buildEditor() {
   E.claimBar = h('div', { class: 'claim-bar', hidden: true });
   E.modeChip = h('div', { class: 'mode-chip', hidden: true }, 'Note tool: click anywhere on the slide · Esc to exit');
   E.stageWrap = h('main', { class: 'stage-wrap', onmousedown: (e) => {
-    if (E.pop?.contains(e.target)) return;
-    if (!E.stage.contains(e.target)) { closePop(); stopEdit(); select(null); }
+    if (E.pop?.contains(e.target) || E.find?.contains(e.target)) return;
+    if (!E.stage.contains(e.target)) { closePop(); stopEdit(); select(null); if (e.target === E.stageWrap && e.button === 0 && !S.noteMode) { e.preventDefault(); beginMarquee(e); } }
   } },
     E.stage, E.steps, E.status, E.banner, E.claimBar, E.modeChip,
-    h('div', { class: 'hint' }, h('span', null, 'Click select · Drag move · Double-click edit text · N note · [ ] animation steps · Esc parent · ⇧ lock axis · Alt no snap')));
+    h('div', { class: 'hint' }, h('span', null, 'Click select · ⇧click / drag on empty area: several · Drag move · Double-click edit text · N note · [ ] animation steps · Esc parent · ⇧ lock axis · Alt no snap · ⌘F find')));
   E.inspector = h('aside', { class: 'inspector' });
 
   $('#app').replaceChildren(h('div', { class: 'editor' }, topbar, sidebar, E.stageWrap, E.inspector));
@@ -604,6 +618,7 @@ function updateBadges() {
 
 const thumbTimers = {};
 function updateThumb(id) {
+  if (F.open) findSoon();
   clearTimeout(thumbTimers[id]);
   thumbTimers[id] = setTimeout(() => {
     const t = thumbs.get(id);
@@ -708,6 +723,7 @@ function setCanvasHtml(html, keepPath = null) {
   S.doc.body.innerHTML = figHtml(html);
   ensureSection();
   S.sel = keepPath ? byPath(keepPath) : null;
+  S.group = [];
   afterCanvasRender();
 }
 
@@ -716,6 +732,7 @@ function afterCanvasRender() {
   if (section()) mathifyDom(section());
   applyStepCss();
   updateOverlay();
+  findHighlight();
   measureCanvasSoon();
   S.doc.fonts?.ready.then(() => { updateOverlay(); measureCanvasSoon(); });
 }
@@ -779,7 +796,14 @@ function onCanvasDown(e) {
   const el = pick(e.target);
   e.preventDefault();
   E.iframe.contentWindow.focus();
-  if (!el) { select(null); return; }
+  if (!el) { select(null); beginMarquee(e); return; }
+  if (e.shiftKey) { // add to / remove from the selection
+    const cur = selection().find((g) => g === el || g.contains(el)) || el;
+    toggleInGroup(cur);
+    if (selection().includes(cur)) beginDrag('move', e, cur);
+    return;
+  }
+  if (S.group.length > 1) { const g = S.group.find((g) => g === el || g.contains(el)); if (g) { beginDrag('move', e, g); return; } }
   const target = S.sel && S.sel !== el && S.sel.contains(el) ? S.sel : el; // keep container selection; dbl-click drills in
   if (target !== S.sel) select(target);
   beginDrag('move', e, target);
@@ -819,18 +843,23 @@ function describe(el) {
 function updateOverlay() {
   if (!E.sel) return;
   const el = S.sel;
+  S.group = S.group.filter((g) => g.isConnected);
+  const many = S.group.length > 1;
   if (!el || !el.isConnected) { E.sel.hidden = true; }
   else {
     placeBox(E.sel, el.getBoundingClientRect());
     E.sel.hidden = false;
     E.sel.classList.toggle('editing', !!S.editing);
-    E.selTag.textContent = S.editing ? `editing ${describe(el)} · Esc to finish` : describe(el);
+    E.sel.classList.toggle('group', many);
+    E.selTag.textContent = S.editing ? `editing ${describe(el)} · Esc to finish` : many ? `${S.group.length} selected` : describe(el);
   }
+  E.multi.replaceChildren(...(many ? S.group.filter((g) => g !== el).map((g) => { const b = h('div', { class: 'sel-box multi' }); placeBox(b, g.getBoundingClientRect()); return b; }) : []));
   renderMarkers();
 }
 
 function select(el) {
   if (S.editing && el !== S.editing) stopEdit();
+  S.group = [];
   S.sel = el || null;
   E.hover.hidden = true;
   updateOverlay();
@@ -841,6 +870,7 @@ function select(el) {
 function startEdit(el, ev) {
   if (!el) return;
   if (S.editing && S.editing !== el) stopEdit();
+  S.group = [];
   S.sel = el;
   S.editing = el;
   el.contentEditable = 'true';
@@ -890,20 +920,26 @@ function pt(ev) {
   return { x: r.left + ev.clientX * S.scale, y: r.top + ev.clientY * S.scale };
 }
 
-function snapTargets(el) {
+/** Shown on the canvas right now (not hidden by the animation step being viewed, not display:none). */
+function isVisible(el) {
+  const r = el.getBoundingClientRect();
+  return !!(r.width || r.height) && S.doc.defaultView.getComputedStyle(el).visibility !== 'hidden';
+}
+function snapTargets(els) {
+  els = [].concat(els);
   const xs = [0, W / 2, W], ys = [0, H / 2, H];
   const sec = section();
-  const others = [...sec.querySelectorAll(':scope > *, .free')].filter((o) => o !== el && !o.contains(el) && !el.contains(o) && !o.classList.contains('notes'));
+  const others = [...sec.querySelectorAll(':scope > *, .free, [data-id]')].filter((o) => !els.some((el) => o === el || o.contains(el) || el.contains(o)) && !o.closest('.notes') && !o.closest('.katex'));
   for (const o of others) {
     const r = o.getBoundingClientRect();
-    if (!r.width || !r.height) continue;
+    if (!r.width || !r.height || !isVisible(o)) continue;
     xs.push(r.left, r.left + r.width / 2, r.right);
     ys.push(r.top, r.top + r.height / 2, r.bottom);
   }
   return { xs, ys };
 }
 function snapAxis(starts, delta, targets) {
-  const th = 6 / S.scale;
+  const th = Math.max(8, 5 / S.scale); // slide px
   let best = null;
   for (const t of targets) for (const s of starts) {
     const d = t - (s + delta);
@@ -919,8 +955,10 @@ function showGuides(gx, gy) {
 function beginDrag(kind, e0, el) {
   const p0 = pt(e0);
   const t0 = getT(el);
-  const r0 = el.getBoundingClientRect();
-  const targets = kind === 'move' ? snapTargets(el) : null;
+  const els = kind === 'move' && S.group.length > 1 && S.group.includes(el) ? S.group.slice() : [el]; // the whole selection moves together
+  const t0s = els.map(getT);
+  const r0 = unionRect(els);
+  const targets = snapTargets(els);
   let moved = false;
   const docs = [document, S.doc];
   const onMove = (ev) => {
@@ -940,8 +978,14 @@ function beginDrag(kind, e0, el) {
         if (dy || !ev.shiftKey) { const sy = snapAxis([r0.top, r0.top + r0.height / 2, r0.bottom], dy, targets.ys); dy = sy.delta; gy = sy.guide; }
       }
       showGuides(gx, gy);
-      setT(el, Math.round(t0.x + dx), Math.round(t0.y + dy));
+      els.forEach((g, i) => setT(g, Math.round(t0s[i].x + dx), Math.round(t0s[i].y + dy)));
     } else {
+      let gx = null, gy = null;
+      if (!ev.altKey) { // the edge being dragged snaps too
+        if (kind.includes('e')) { const sx = snapAxis([r0.right], dx, targets.xs); dx = sx.delta; gx = sx.guide; }
+        if (kind.includes('s') && !(el.tagName === 'IMG' && kind === 'se')) { const sy = snapAxis([r0.bottom], dy, targets.ys); dy = sy.delta; gy = sy.guide; }
+      }
+      showGuides(gx, gy);
       if (kind.includes('e')) el.style.width = `${Math.max(16, Math.round(r0.width + dx))}px`;
       if (kind.includes('s') && !(el.tagName === 'IMG' && kind === 'se')) el.style.height = `${Math.max(16, Math.round(r0.height + dy))}px`;
       if (el.tagName === 'IMG' && kind === 'se') el.style.removeProperty('height');
@@ -956,6 +1000,102 @@ function beginDrag(kind, e0, el) {
     if (moved) { commit(); renderInspector(); }
   };
   for (const d of docs) { d.addEventListener('mousemove', onMove, true); d.addEventListener('mouseup', onUp, true); }
+}
+
+function unionRect(els) {
+  const rs = els.map((e) => e.getBoundingClientRect());
+  const left = Math.min(...rs.map((r) => r.left)), top = Math.min(...rs.map((r) => r.top));
+  const right = Math.max(...rs.map((r) => r.right)), bottom = Math.max(...rs.map((r) => r.bottom));
+  return { left, top, right, bottom, width: right - left, height: bottom - top };
+}
+
+// ---------- several elements at once (⇧click, or drag a box on an empty part of the slide)
+/** The selected elements: the group when there are several, else the one selected element. */
+const selection = () => (S.group.length > 1 ? S.group : S.sel ? [S.sel] : []);
+function setGroup(list) {
+  list = [...new Set(list)].filter((g) => g?.isConnected);
+  if (list.length <= 1) { select(list[0] || null); return; }
+  if (S.editing) stopEdit();
+  S.group = list;
+  S.sel = list[list.length - 1];
+  E.hover.hidden = true;
+  updateOverlay();
+  renderInspector();
+}
+function toggleInGroup(el) {
+  const cur = selection();
+  if (cur.includes(el)) setGroup(cur.filter((g) => g !== el));
+  else setGroup([...cur.filter((g) => !g.contains(el) && !el.contains(g)), el]);
+}
+/** Elements a marquee can pick: blocks of the slide and anything with a data-id, innermost first. */
+function marqueeCandidates() {
+  const sec = section();
+  return [...sec.querySelectorAll(':scope > *, .free, [data-id]')].filter((o) => o !== sec && !o.closest('.notes') && !o.closest('.katex') && !o.closest('.math[data-tex] .math') && !(o.closest('svg') && o.tagName.toLowerCase() !== 'svg') && isVisible(o));
+}
+function beginMarquee(e0) {
+  if (!S.doc || !section()) return;
+  const toSlide = (p) => { const r = E.iframe.getBoundingClientRect(); return { x: (p.x - r.left) / S.scale, y: (p.y - r.top) / S.scale }; };
+  const s0 = toSlide(pt(e0));
+  const add = e0.shiftKey ? selection().slice() : [];
+  let box = null;
+  const docs = [document, S.doc];
+  const onMove = (ev) => {
+    const s = toSlide(pt(ev));
+    box = { left: Math.min(s0.x, s.x), top: Math.min(s0.y, s.y), right: Math.max(s0.x, s.x), bottom: Math.max(s0.y, s.y) };
+    if (box.right - box.left + box.bottom - box.top < 6) return;
+    document.body.classList.add('dragging');
+    E.marquee.hidden = false;
+    placeBox(E.marquee, { left: box.left, top: box.top, width: box.right - box.left, height: box.bottom - box.top });
+  };
+  const onUp = () => {
+    for (const d of docs) { d.removeEventListener('mousemove', onMove, true); d.removeEventListener('mouseup', onUp, true); }
+    document.body.classList.remove('dragging');
+    E.marquee.hidden = true;
+    if (!box || box.right - box.left + box.bottom - box.top < 6) return;
+    const hit = marqueeCandidates().filter((o) => { const r = o.getBoundingClientRect(); return r.left < box.right && r.right > box.left && r.top < box.bottom && r.bottom > box.top; });
+    const inner = hit.filter((o) => !hit.some((x) => x !== o && o.contains(x))); // innermost: the title and the list, not the column holding both
+    setGroup([...add.filter((g) => !inner.some((x) => x.contains(g) || g.contains(x))), ...inner]);
+  };
+  for (const d of docs) { d.addEventListener('mousemove', onMove, true); d.addEventListener('mouseup', onUp, true); }
+}
+/** Align or distribute the selection (with the same translate moves a drag makes, so flow layout is untouched). */
+function alignGroup(kind) {
+  const els = selection();
+  if (els.length < 2) return;
+  const rs = els.map((e) => e.getBoundingClientRect()), U = unionRect(els);
+  const d = els.map(() => ({ x: 0, y: 0 }));
+  const order = (key) => els.map((_, i) => i).sort((a, b) => rs[a][key] - rs[b][key]);
+  if (kind === 'left') rs.forEach((r, i) => { d[i].x = U.left - r.left; });
+  if (kind === 'center') rs.forEach((r, i) => { d[i].x = U.left + U.width / 2 - (r.left + r.width / 2); });
+  if (kind === 'right') rs.forEach((r, i) => { d[i].x = U.right - r.right; });
+  if (kind === 'top') rs.forEach((r, i) => { d[i].y = U.top - r.top; });
+  if (kind === 'middle') rs.forEach((r, i) => { d[i].y = U.top + U.height / 2 - (r.top + r.height / 2); });
+  if (kind === 'bottom') rs.forEach((r, i) => { d[i].y = U.bottom - r.bottom; });
+  if (kind === 'hdist' || kind === 'vdist') {
+    const [a, b, size] = kind === 'hdist' ? ['left', 'x', 'width'] : ['top', 'y', 'height'];
+    const idx = order(a);
+    const gap = ((kind === 'hdist' ? U.width : U.height) - rs.reduce((s, r) => s + r[size], 0)) / (els.length - 1);
+    let at = U[a];
+    for (const i of idx) { d[i][b] = at - rs[i][a]; at += rs[i][size] + gap; }
+  }
+  els.forEach((e, i) => { const t = getT(e); setT(e, Math.round(t.x + d[i].x), Math.round(t.y + d[i].y)); });
+  commit(); updateOverlay();
+}
+function groupPanel() {
+  const els = selection();
+  const a = (ic, kind, title) => btn('', () => alignGroup(kind), { cls: 'icon', ic, title });
+  return h('section', { class: 'panel' },
+    h('h4', null, `${els.length} elements selected`),
+    h('div', { class: 'row wrap' },
+      h('div', { class: 'btn-group' }, a('aLeft', 'left', 'Align left edges'), a('aCenterH', 'center', 'Align centres (horizontally)'), a('aRight', 'right', 'Align right edges')),
+      h('div', { class: 'btn-group' }, a('aTop', 'top', 'Align top edges'), a('aMiddle', 'middle', 'Align middles (vertically)'), a('aBottom', 'bottom', 'Align bottom edges'))),
+    els.length >= 3 ? h('div', { class: 'row wrap' },
+      h('div', { class: 'btn-group' }, a('dH', 'hdist', 'Distribute horizontally (equal gaps)'), a('dV', 'vdist', 'Distribute vertically (equal gaps)'))) : null,
+    h('p', { class: 'muted small' }, 'Drag or use the arrow keys to move them together (⇧ = 10 px). ⇧click adds or removes one.'),
+    h('div', { class: 'row wrap' },
+      btn('Duplicate', () => duplicateEl(), { cls: 'small', title: '⌘D' }),
+      btn('Delete', () => deleteEl(), { cls: 'small danger', title: 'Delete' }),
+      btn('Deselect', () => select(null), { cls: 'small ghost', title: 'Esc' })));
 }
 
 // ---------- element operations
@@ -1003,6 +1143,16 @@ async function insertImageFile(file, at = null, replace = null, uploaded = null)
   } catch (e) { toast(e.message, 'error'); }
 }
 function duplicateEl() {
+  if (S.group.length > 1) {
+    const clones = S.group.map((el) => {
+      const c = el.cloneNode(true);
+      [c, ...c.querySelectorAll('[data-id]')].forEach((n) => { if (n.dataset.id) n.dataset.id = uid(n.dataset.id.replace(/-[a-z0-9]{4}$/, '').replace(/-\d+$/, '') || 'el'); });
+      el.after(c);
+      const t = getT(el); setT(c, t.x + 32, t.y + 32);
+      return c;
+    });
+    commit(); setGroup(clones); return;
+  }
   const el = S.sel;
   if (!el) return;
   const c = el.cloneNode(true);
@@ -1014,6 +1164,7 @@ function duplicateEl() {
   select(c);
 }
 function deleteEl() {
+  if (S.group.length > 1) { S.group.forEach((g) => g.remove()); commit(); select(null); return; }
   const el = S.sel;
   if (!el) return;
   const parent = el.parentElement;
@@ -1153,6 +1304,7 @@ function onKey(e) {
   const openModal = $('.modal-back');
   if (openModal) { if (e.key === 'Escape') openModal.close?.(); return; }
   if (S.view !== 'editor') return;
+  if (mod && (key === 'f' || key === 'h') && !e.altKey) { e.preventDefault(); openFind(key === 'h' ? 'replace' : 'find'); return; }
   if (mod && key === 's') { e.preventDefault(); if (!S.editing) commit(); else commitSoon.flush?.(); flushSaves(); return; }
   const t = e.target;
   const inField = t && t.ownerDocument === document && t.closest?.('input, textarea, select');
@@ -1171,15 +1323,14 @@ function onKey(e) {
   const step = e.shiftKey ? 10 : 1;
   switch (e.key) {
     case 'Delete': case 'Backspace': if (S.sel) { e.preventDefault(); deleteEl(); } break;
-    case 'Enter': case 'F2': if (S.sel) { e.preventDefault(); const host = editHostFor(S.sel); if (host) startEdit(host); } break;
-    case 'Escape': if (S.sel) { const p = S.sel.parentElement; select(p && p !== section() ? p : null); } break;
+    case 'Enter': case 'F2': if (S.sel && S.group.length < 2) { e.preventDefault(); const host = editHostFor(S.sel); if (host) startEdit(host); } break;
+    case 'Escape': if (S.group.length > 1) select(null); else if (S.sel) { const p = S.sel.parentElement; select(p && p !== section() ? p : null); } break;
     case 'ArrowLeft': case 'ArrowRight': case 'ArrowUp': case 'ArrowDown': {
       e.preventDefault();
       if (S.sel) {
-        const tr = getT(S.sel);
         const dx = e.key === 'ArrowLeft' ? -step : e.key === 'ArrowRight' ? step : 0;
         const dy = e.key === 'ArrowUp' ? -step : e.key === 'ArrowDown' ? step : 0;
-        setT(S.sel, tr.x + dx, tr.y + dy);
+        for (const g of selection()) { const tr = getT(g); setT(g, tr.x + dx, tr.y + dy); }
         updateOverlay(); commitSoon();
       } else {
         const i = S.order.indexOf(S.current) + (e.key === 'ArrowUp' || e.key === 'ArrowLeft' ? -1 : 1);
@@ -1367,6 +1518,7 @@ function applyStepCss() {
   let st = S.doc.getElementById('step-css');
   if (!st) { st = S.doc.createElement('style'); st.id = 'step-css'; S.doc.head.append(st); }
   st.textContent = S.step != null && section() ? stepCss(section(), S.step, { mark: true, vals: stepVals(section()) }) : '';
+  if (S.group.length > 1) { const vis = S.group.filter((g) => isVisible(g)); if (vis.length !== S.group.length) { if (vis.length > 1) { S.group = vis; if (!vis.includes(S.sel)) S.sel = vis[vis.length - 1]; } else select(vis[0] || null); } }
   if (S.sel?.isConnected && S.doc.defaultView.getComputedStyle(S.sel).visibility === 'hidden') select(null);
 }
 function setStep(k) {
@@ -1572,7 +1724,7 @@ function renderInspector() {
   if (!E.inspector) return;
   const scroll = E.inspector.scrollTop;
   E.inspector.replaceChildren(...[
-    S.sel ? elementPanel(S.sel) : null,
+    S.group.length > 1 ? groupPanel() : S.sel ? elementPanel(S.sel) : null,
     S.current ? slidePanel() : null,
     S.current ? chaptersPanel() : null,
     commentsPanel()].filter(Boolean));
@@ -2180,6 +2332,178 @@ async function syncFromDisk(files) {
   if (changedOthers.includes(S.current)) toast('Slide updated from disk', 'ok');
   if (commentsChanged && !E.inspector.contains(document.activeElement)) { renderInspector(); renderMarkers(); }
 }
+// ============================================================ find & replace (every slide's visible text)
+// Matching is lib/textfind.mjs, the same code `slides find/replace` uses: text only (never markup, attributes,
+// equations, embeds, the chapter timeline, or speaker notes unless asked). Replacements rewrite only the matched
+// characters of the slide's HTML and go through the normal save path, so each changed slide is one undo step
+// and one history version.
+const F = { open: false, q: '', r: '', caseSensitive: false, word: false, notes: false, results: [], cur: -1 };
+const FIND_SKIP = 'script,style,template,textarea,title,.math,.katex,figure.embed,nav.toc';
+const findOpts = () => ({ caseSensitive: F.caseSensitive, word: F.word, notes: F.notes });
+const findSoon = debounce(() => runFind(), 250);
+function openFind(mode = 'find') {
+  if (S.view !== 'editor') return;
+  if (!E.find || !E.find.isConnected) buildFind();
+  F.open = true; E.find.hidden = false;
+  const sel = S.doc?.getSelection?.()?.toString().trim();
+  if (sel && sel.length < 80 && !sel.includes('\n')) { F.q = sel; E.findIn.value = sel; }
+  const inp = mode === 'replace' ? E.replIn : E.findIn;
+  inp.focus(); inp.select();
+  runFind();
+}
+function closeFind() {
+  F.open = false;
+  if (E.find) E.find.hidden = true;
+  findHighlight();
+}
+function buildFind() {
+  const toggle = (label, key, title) => {
+    const b = h('button', { class: `btn small toggle${F[key] ? ' on' : ''}`, title, onclick: () => { F[key] = !F[key]; b.classList.toggle('on', F[key]); runFind(); } }, label);
+    return b;
+  };
+  E.findIn = h('input', { type: 'search', placeholder: 'Find in all slides', value: F.q });
+  E.replIn = h('input', { type: 'text', placeholder: 'Replace with', value: F.r });
+  E.findIn.addEventListener('input', () => { F.q = E.findIn.value; findSoon(); });
+  E.replIn.addEventListener('input', () => { F.r = E.replIn.value; });
+  const keys = (e) => {
+    if (e.key === 'Escape') { e.preventDefault(); closeFind(); E.iframe?.contentWindow.focus(); }
+    else if (e.key === 'Enter' && e.target === E.findIn) { e.preventDefault(); findStep(e.shiftKey ? -1 : 1); }
+    else if (e.key === 'Enter' && e.target === E.replIn) { e.preventDefault(); (e.metaKey || e.ctrlKey) ? replaceAll() : replaceOne(); }
+  };
+  E.findIn.addEventListener('keydown', keys); E.replIn.addEventListener('keydown', keys);
+  E.findCount = h('span', { class: 'find-count muted' });
+  E.findList = h('div', { class: 'find-results' });
+  E.find = h('div', { class: 'find-panel', hidden: true },
+    h('div', { class: 'row' }, E.findIn,
+      btn('', () => findStep(-1), { cls: 'icon ghost small', ic: 'up', title: 'Previous (⇧Enter)' }),
+      btn('', () => findStep(1), { cls: 'icon ghost small flip', ic: 'up', title: 'Next (Enter)' }),
+      btn('×', () => closeFind(), { cls: 'icon ghost small', title: 'Close (Esc)' })),
+    h('div', { class: 'row' }, E.replIn,
+      btn('Replace', () => replaceOne(), { cls: 'small', title: 'Replace the highlighted match (Enter)' }),
+      btn('All', () => replaceAll(), { cls: 'small', title: 'Replace every match in every slide (⌘Enter)' })),
+    h('div', { class: 'row' },
+      toggle('Aa', 'caseSensitive', 'Match case'), toggle('Word', 'word', 'Whole words only'), toggle('Notes', 'notes', 'Also search speaker notes'),
+      h('span', { class: 'grow' }), E.findCount),
+    E.findList);
+  E.stageWrap.append(E.find);
+}
+function runFind() {
+  if (!F.open || !E.find) return;
+  const prev = F.results[F.cur];
+  F.results = [];
+  if (F.q.trim()) {
+    for (const id of S.order) {
+      findInHtml(S.html[id] || '', F.q, findOpts()).forEach((m, k) => F.results.push({ id, k, ctx: m.context, start: m.start, end: m.end }));
+    }
+  }
+  F.cur = prev ? F.results.findIndex((r) => r.id === prev.id && r.k === prev.k) : -1;
+  if (F.cur < 0 && F.results.length) { const i = F.results.findIndex((r) => r.id === S.current); F.cur = i >= 0 ? i : 0; }
+  renderFindList();
+  findHighlight();
+}
+function renderFindList() {
+  const n = F.results.length, slides = new Set(F.results.map((r) => r.id)).size;
+  E.findCount.textContent = !F.q.trim() ? '' : n ? `${F.cur + 1} of ${n} · ${slides} slide${slides > 1 ? 's' : ''}` : 'No matches';
+  const groups = [];
+  F.results.forEach((r, i) => { let g = groups[groups.length - 1]; if (!g || g.id !== r.id) groups.push(g = { id: r.id, items: [] }); g.items.push([r, i]); });
+  E.findList.replaceChildren(...groups.map((g) => h('div', { class: 'find-group' },
+    h('div', { class: 'find-slide' }, `${S.order.indexOf(g.id) + 1}. ${g.id}`, liveClaim(g.id) ? h('span', { class: 'muted' }, ` · ✎ ${liveClaim(g.id).by}`) : null),
+    ...g.items.map(([r, i]) => h('button', { class: `find-hit${i === F.cur ? ' cur' : ''}`, onclick: () => { F.cur = i; findGo(); } },
+      h('span', { class: 'muted' }, r.ctx.before), h('mark', null, r.ctx.match), h('span', { class: 'muted' }, r.ctx.after))))));
+  E.findList.querySelector('.find-hit.cur')?.scrollIntoView({ block: 'nearest' });
+}
+/** The k-th match on the canvas, as a DOM range (same text-node rules as lib/textfind.mjs). */
+function canvasMatches() {
+  const sec = section(), re = queryRegex(F.q, findOpts());
+  if (!sec || !re) return [];
+  const skip = FIND_SKIP + (F.notes ? '' : ',.notes');
+  const out = [];
+  const w = S.doc.createTreeWalker(sec, NodeFilter.SHOW_TEXT, { acceptNode: (n) => (n.parentElement?.closest(skip) ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT) });
+  for (let n; (n = w.nextNode());) {
+    re.lastIndex = 0;
+    for (let m; (m = re.exec(n.data));) {
+      if (!m[0]) { re.lastIndex++; continue; }
+      const r = S.doc.createRange(); r.setStart(n, m.index); r.setEnd(n, m.index + m[0].length);
+      out.push(r);
+    }
+  }
+  return out;
+}
+function findHighlight() {
+  const win = S.doc?.defaultView;
+  if (!win?.CSS?.highlights || !win.Highlight) return;
+  if (!S.doc.getElementById('find-css')) S.doc.head.append(Object.assign(S.doc.createElement('style'), { id: 'find-css', textContent: '::highlight(find-hit){background:#ffe066;color:#111}::highlight(find-cur){background:#ff9f1a;color:#111}' }));
+  win.CSS.highlights.delete('find-hit'); win.CSS.highlights.delete('find-cur');
+  if (!F.open || !F.q.trim()) return;
+  const ranges = canvasMatches();
+  if (!ranges.length) return;
+  const cur = F.results[F.cur];
+  const ci = cur && cur.id === S.current ? cur.k : -1;
+  win.CSS.highlights.set('find-hit', new win.Highlight(...ranges.filter((_, i) => i !== ci)));
+  if (ranges[ci]) win.CSS.highlights.set('find-cur', new win.Highlight(ranges[ci]));
+}
+function findStep(d) {
+  if (!F.results.length) return;
+  F.cur = (F.cur + d + F.results.length) % F.results.length;
+  findGo();
+}
+/** Show the current match: open its slide, select the element holding it (showing every click step if needed). */
+function findGo() {
+  const r = F.results[F.cur];
+  if (!r) return;
+  if (r.id !== S.current) selectSlide(r.id);
+  const range = canvasMatches()[r.k];
+  if (range) {
+    let el = pick(range.startContainer.parentElement);
+    if (el && !isVisible(el) && S.step != null) { setStep(null); el = pick(range.startContainer.parentElement); }
+    if (el) select(el);
+  }
+  renderFindList();
+  findHighlight();
+}
+/** Put new html for a slide through the editor's normal path: undo stack, save queue, thumbnail. */
+function applySlideEdit(id, html) {
+  if (norm(html) === norm(S.html[id])) return;
+  S.html[id] = html;
+  const H = (S.hist[id] ??= { stack: [html], i: 0 });
+  H.stack.splice(H.i + 1); H.stack.push(html); H.i = H.stack.length - 1;
+  if (id === S.current) { setCanvasHtml(html, null); renderInspector(); }
+  queueSave(id);
+  updateThumb(id);
+  updateUndoButtons();
+}
+const escText = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+function flushCanvas() { if (S.editing) stopEdit(); else commitSoon.flush(); }
+function replaceOne() {
+  flushCanvas(); runFind();
+  const r = F.results[F.cur];
+  if (!r) return;
+  const html = S.html[r.id];
+  const m = findInHtml(html, F.q, findOpts())[r.k];
+  if (!m) return;
+  if (liveClaim(r.id)) toast(`Note: ${liveClaim(r.id).by} is working on "${r.id}"`);
+  applySlideEdit(r.id, html.slice(0, m.start) + escText(F.r) + html.slice(m.end));
+  runFind();
+  if (F.results.length) { F.cur = Math.min(F.cur, F.results.length - 1); findGo(); }
+}
+function replaceAll() {
+  flushCanvas(); runFind();
+  if (!F.results.length) return;
+  const ids = [...new Set(F.results.map((r) => r.id))];
+  const n = F.results.length;
+  if (!confirm(`Replace ${n} match${n > 1 ? 'es' : ''} on ${ids.length} slide${ids.length > 1 ? 's' : ''} with "${F.r}"?`)) return;
+  for (const id of ids) {
+    const html = S.html[id];
+    const hits = findInHtml(html, F.q, findOpts());
+    let out = '', at = 0;
+    for (const m of hits) { out += html.slice(at, m.start) + escText(F.r); at = m.end; }
+    applySlideEdit(id, out + html.slice(at));
+  }
+  const claimed = ids.filter((id) => liveClaim(id));
+  toast(`Replaced ${n} on ${ids.length} slide${ids.length > 1 ? 's' : ''} (undo per slide with ⌘Z, or from History)${claimed.length ? ` · claimed by an agent: ${claimed.join(', ')}` : ''}`);
+  runFind();
+}
+
 function flashLater(id) { setTimeout(() => flashThumb(id), 50); }
 
 let evChain = Promise.resolve();

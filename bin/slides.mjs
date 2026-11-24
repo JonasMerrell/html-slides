@@ -8,6 +8,7 @@ import { buildPresentation } from '../lib/build.mjs';
 import { embedIssues, EMBED_TEMPLATE } from '../lib/embed.mjs';
 import { findMath, mathIssues, renderMathIn } from '../lib/math.mjs';
 import { deckFigures, findFigures, figureStatus, runFigure } from '../lib/figures.mjs';
+import { findInHtml, replaceInHtml } from '../lib/textfind.mjs';
 
 const HELP = `slides — work with HTML slide decks (files live in ${path.relative(process.cwd(), store.DECKS_DIR) || '.'})
 
@@ -59,6 +60,13 @@ Agent ↔ human loop
   slides resolve <deck> <comment-id> [--reply "what you did"]
   slides comment <deck> <slide> [--target DATA-ID] [--step K] "text"   leave a note/question for the human
 
+Find and replace (visible slide text only: never markup, attributes, equations, embeds or the timeline)
+  slides find <deck> "text" [--case] [--word] [--notes]
+                                                 every match with its slide and context (--notes: speaker notes too)
+  slides replace <deck> "old" "new" [--case] [--word] [--notes] [--dry-run] [slide...]
+                                                 replace in text only; the rest of each file stays byte-for-byte.
+                                                 Whitespace in "old" matches any whitespace (line breaks too)
+
 Interactive embeds (live only in present mode and exports; posters everywhere else)
   slides embed <deck> <name> [--from DIR]        scaffold assets/embeds/<name>/ (index.html, app.js, poster.png)
   slides poster <deck> <name> [--slide ID] [--scale 2] [--size 1280x720]
@@ -89,11 +97,13 @@ Quality
 // ------------------------------------------------------------ arg parsing
 const argv = process.argv.slice(2);
 const pos = [], opt = {};
+const FLAGS = new Set(['case', 'word', 'notes', 'dry-run', 'all', 'force', 'sheet', 'stdin', 'first']); // never take a value
 for (let i = 0; i < argv.length; i++) {
   const a = argv[i];
   if (a.startsWith('--')) {
     const [k, v] = a.slice(2).split('=');
     if (v !== undefined) opt[k] = v;
+    else if (FLAGS.has(k)) opt[k] = true;
     else if (i + 1 < argv.length && !argv[i + 1].startsWith('--')) opt[k] = argv[++i];
     else opt[k] = true;
   } else pos.push(a);
@@ -434,6 +444,33 @@ async function main() {
         else { failed++; console.log(`FAILED: ${r.error}`); if (r.stderr.trim()) console.log(r.stderr.trim().split('\n').map((l) => `    ${l}`).join('\n')); }
       }
       if (failed) process.exitCode = 2;
+      return;
+    }
+
+    case 'find': case 'replace': {
+      const d = need(rest[0], 'deck name');
+      const query = need(rest[1], 'text to find');
+      const repl = cmd === 'replace' ? rest[2] : undefined;
+      if (cmd === 'replace' && repl === undefined) fail('Missing the replacement text: slides replace <deck> "old" "new"');
+      const fo = { caseSensitive: !!opt.case, word: !!opt.word, notes: !!opt.notes };
+      const only = rest.slice(cmd === 'replace' ? 3 : 2);
+      const ids = only.length ? only : store.readMeta(d).slides;
+      let total = 0, slides = 0;
+      for (const id of ids) {
+        const html = store.readSlide(d, id);
+        const hits = findInHtml(html, query, fo);
+        if (!hits.length) continue;
+        total += hits.length; slides++;
+        console.log(`${id}  (${hits.length})`);
+        for (const h of hits) console.log(`    ${h.context.before}[${cmd === 'replace' ? `${h.context.match} → ${repl}` : h.context.match}]${h.context.after}`);
+        if (cmd === 'replace' && !opt['dry-run']) {
+          warnClaimed(d, [id]);
+          store.writeSlide(d, id, replaceInHtml(html, query, repl, fo).html, { source: 'replace' });
+        }
+      }
+      if (!total) console.log(`No matches for "${query}"${fo.notes ? '' : ' (speaker notes not searched: add --notes)'}.`);
+      else if (cmd === 'find') console.log(`${total} match(es) on ${slides} slide(s).`);
+      else console.log(opt['dry-run'] ? `Would replace ${total} match(es) on ${slides} slide(s) (dry run: nothing written).` : `Replaced ${total} match(es) on ${slides} slide(s). Undo one slide with: slides restore ${d} <slide> -1`);
       return;
     }
 

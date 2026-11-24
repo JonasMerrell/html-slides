@@ -20,6 +20,10 @@ On a remote machine, forward the port with `ssh -L 4173:127.0.0.1:4173 host`, or
    then runs `slides check` and `slides render --sheet` and looks at the PNGs to fix problems.
 2. **You refine** in the editor:
    - click to select; drag to move; use the handles to resize; Shift locks the axis; Alt turns off snapping
+     (moving and resizing snap to the slide's edges and centre and to other elements, with pink guides)
+   - select several with ⇧click or by dragging a box from an empty part of the slide (or the grey area around it);
+     move them together (mouse or arrow keys), align or distribute them from the inspector, duplicate or delete them
+   - **Find** (⌘F / ⌘H) searches the text of every slide and replaces it (also `slides find` / `slides replace`)
    - double-click to rewrite text in place; Esc selects the parent element
    - add text boxes, images (or drop or paste images onto the slide) and LaTeX equations (rendered with KaTeX, offline)
    - use the inspector for font size, colour, alignment and classes, plus speaker notes, raw HTML and theme CSS

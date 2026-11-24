@@ -238,6 +238,17 @@ direct file edits (picked up by the editor server, and by `slides comment` / `sl
 - When you `slides resolve` a note, the slide as it was when the note was left and as it is now are stored on the
   note, and the human sees a before/after **See change** view. Make the edit first, then resolve.
 
+## Find and replace
+
+`slides find <deck> "text" [--case] [--word] [--notes]` lists every match with its slide and context;
+`slides replace <deck> "old" "new" [same flags] [--dry-run] [slide…]` replaces them. Both look at **visible text only**:
+never tags, attributes, `data-tex` equations, embeds, or the chapter timeline (use `slides toc --set` for that), and
+speaker notes only with `--notes`. Whitespace in the query matches any whitespace (line breaks in the source too); a
+match never spans two elements (e.g. across `<b>…</b>`). Only the matched characters change, the rest of each file
+stays byte-for-byte, and every changed slide gets a history version (`slides restore <deck> <slide> -1` undoes one).
+Prefer this over sed for renaming a term across a deck. It warns about slides another agent has claimed; run
+`--dry-run` first. The editor has the same thing (⌘F / ⌘H, or **Find**).
+
 ## Presenter view and rehearsals
 
 While presenting (`/present/<deck>` or an exported file), **P** (or the screen button) opens a presenter window: the
