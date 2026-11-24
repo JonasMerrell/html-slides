@@ -244,6 +244,7 @@ const server = http.createServer(async (req, res) => {
     }
     if (req.method !== 'GET' && req.method !== 'HEAD') return send(res, 404, { error: 'Not found' });
     if (pathname === '/core/slides.css') return serveFile(res, store.CORE_CSS, path.join(store.ROOT, 'core'));
+    if (pathname.startsWith('/vendor/katex/')) return serveFile(res, path.join(store.ROOT, pathname), path.join(store.ROOT, 'vendor', 'katex'));
     // live embed page: /embed/<deck>/assets/embeds/<name>/index.html, runtime injected, files from /decks/<deck>/…
     const em = pathname.match(/^\/embed\/([^/]+)\/(assets\/embeds\/.+\.html)$/);
     if (em) {

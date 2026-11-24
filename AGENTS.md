@@ -91,9 +91,30 @@ Layouts: `title`, `content`, `split` (text | figure), `blank`. The frame is deli
   links to the title slide and the mPRIME logo to the last slide (`--before-link: first; --after-link: last` in the theme).
 - **Optional colour per section:** add `obj1` / `obj2` / `obj3` to the `<section>`.
 - Body: `<div class="main">` vertically centres the content; also available are `.split`, `.figure`, `.caption`, `.cite` (source footer) and `.kicker`.
-- There's no KaTeX: write maths with Unicode, `<sub>`/`<sup>`, or as SVG or images.
+- Maths: use LaTeX equations (see "Equations" below).
 
 Local themes that aren't part of the public repo are documented in `AGENTS.local.md`. Read it if it exists.
+
+## Equations (LaTeX)
+
+Equations are written in LaTeX and rendered with KaTeX (vendored in `vendor/katex/`, no CDN, works offline and in
+exports). The LaTeX lives in `data-tex`; the element's children are the KaTeX rendering, which is generated for you:
+
+```html
+<p data-id="law">Basquin: <span class="math" data-tex="\sigma_a = \sigma_f' (2N_f)^b"></span></p>
+<div class="math display" data-id="coffin" data-tex="\frac{\Delta\varepsilon}{2} = \frac{\sigma_f'}{E}(2N_f)^b + \varepsilon_f'(2N_f)^c"></div>
+```
+
+- Write the element **empty** (or leave the old rendering): saving through the editor or the CLI (`slides add`,
+  `--stdin`, …) renders it. **After editing slide files directly, run `slides math <deck>`.** Present mode, exports,
+  `render` and `check` render equations on the fly, so an unrendered one still shows correctly there. To change an
+  equation, change `data-tex` only; never edit KaTeX's spans.
+- `display` = its own line, centred; without it the equation sits inline in the text and scales with the text's
+  font size. Escape `"` as `&quot;` and `&` (matrices) as `&amp;` inside `data-tex`. No `$…$` delimiters.
+- `slides check` errors on LaTeX that doesn't parse and warns about equations that aren't rendered yet.
+  `slides outline` shows equations as `$…$`.
+- In the editor: **Equation** in the toolbar adds one (with a live preview); while editing text it is inserted inline
+  at the cursor. Double-click an equation (or "Edit equation…" in the inspector) to change its LaTeX.
 
 ## Interactive embeds (sliders, buttons, live charts, three.js / WebGL)
 

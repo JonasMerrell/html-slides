@@ -6,6 +6,7 @@ import path from 'node:path';
 import * as store from '../lib/store.mjs';
 import { buildPresentation } from '../lib/build.mjs';
 import { embedIssues, EMBED_TEMPLATE } from '../lib/embed.mjs';
+import { findMath, mathIssues, renderMathIn } from '../lib/math.mjs';
 
 const HELP = `slides — work with HTML slide decks (files live in ${path.relative(process.cwd(), store.DECKS_DIR) || '.'})
 
@@ -51,6 +52,10 @@ Interactive embeds (live only in present mode and exports; posters everywhere el
   slides poster <deck> <name> [--slide ID] [--scale 2] [--size 1280x720]
                                                  screenshot the live embed (headless WebGL) to its poster.png
 
+Equations (LaTeX rendered with KaTeX into the slide; see AGENTS.md, Equations)
+  slides math <deck> [slide...]                  render <span class="math" data-tex="…"> and <div class="math display" …>
+                                                 after editing slide files directly (editor and CLI saves do it)
+
 Quality
   slides check <deck>                            lint + real-browser overflow check (needs Chrome)
   slides render <deck> [slide...] [--out DIR] [--sheet] [--cols N] [--step K | --steps]
@@ -79,7 +84,9 @@ const need = (v, what) => { if (v === undefined || v === true || v === '') { fai
 const fmtSec = (s) => { s = Math.round(s); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`; };
 function fail(msg) { console.error(`error: ${msg}`); process.exit(1); }
 
-const text = (html) => html.replace(/<aside class="notes">[\s\S]*?<\/aside>/gi, '').replace(/<(br|\/p|\/li|\/h\d|\/div)>/gi, ' ').replace(/<[^>]+>/g, '').replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/\s+/g, ' ').trim();
+// equations read as their LaTeX ($…$) rather than KaTeX's markup
+const texText = (html) => { let out = '', at = 0; for (const e of findMath(html)) { out += html.slice(at, e.start) + ` $${e.tex}$ `.replace(/</g, '&lt;'); at = e.end; } return out + html.slice(at); };
+const text = (html) => texText(html).replace(/<aside class="notes">[\s\S]*?<\/aside>/gi, '').replace(/<(br|\/p|\/li|\/h\d|\/div)>/gi, ' ').replace(/<[^>]+>/g, '').replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/\s+/g, ' ').trim();
 const layoutOf = (html) => (html.match(/data-layout="([^"]+)"/) || [])[1] || '?';
 const notesOf = (html) => text((html.match(/<aside class="notes">([\s\S]*?)<\/aside>/i) || [])[1] || '');
 const rel = (p) => path.relative(process.cwd(), p) || p;
@@ -313,6 +320,7 @@ async function main() {
           if (!fs.existsSync(path.join(store.deckDir(d), decodeURIComponent(m[1])))) issues.push([id, `missing asset ${m[1]}`]);
         }
         for (const [level, msg] of embedIssues(d, html)) issues.push([id, msg, level]);
+        for (const m of mathIssues(html)) issues.push([id, m.msg.replace('<deck>', d), m.level === 'warn' ? 'warn' : undefined]);
         if (/<script\b/i.test(html)) issues.push([id, `<script> placed directly in a slide never runs in the editor and runs on every slide at once in present mode; move interactive code into an embed: "slides embed ${d} <name>" (see AGENTS.md, Interactive embeds)`, 'warn']);
       }
       try {
@@ -335,6 +343,21 @@ async function main() {
       }
       if (open) console.log(`  (${open} open comment${open > 1 ? 's' : ''} — run "slides comments ${d}")`);
       if (errs.some(([id]) => id !== '-')) process.exitCode = 2;
+      return;
+    }
+
+    case 'math': {
+      const d = need(rest[0], 'deck name');
+      const ids = rest.length > 1 ? rest.slice(1) : store.readMeta(d).slides;
+      let n = 0, eqs = 0;
+      for (const id of ids) {
+        const html = store.readSlide(d, id);
+        const list = findMath(html);
+        eqs += list.length;
+        for (const m of mathIssues(html)) if (m.level === 'error') console.log(`  ${id.padEnd(20)} ${m.msg}`);
+        if (list.length && renderMathIn(html) !== html) { store.writeSlide(d, id, html, { source: 'math' }); n++; console.log(`rendered ${id}`); }
+      }
+      console.log(eqs ? `${eqs} equation(s); ${n} slide(s) re-rendered.` : 'No equations (class="math" with data-tex).');
       return;
     }
 

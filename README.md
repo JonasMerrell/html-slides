@@ -21,7 +21,7 @@ On a remote machine, forward the port with `ssh -L 4173:127.0.0.1:4173 host`, or
 2. **You refine** in the editor:
    - click to select; drag to move; use the handles to resize; Shift locks the axis; Alt turns off snapping
    - double-click to rewrite text in place; Esc selects the parent element
-   - add text boxes and images (or drop or paste images onto the slide)
+   - add text boxes, images (or drop or paste images onto the slide) and LaTeX equations (rendered with KaTeX, offline)
    - use the inspector for font size, colour, alignment and classes, plus speaker notes, raw HTML and theme CSS
    - reorder slides by dragging thumbnails; ⌘Z / ⌘⇧Z undo and redo (agent edits are in the undo history too)
 3. **You leave notes** pinned to elements ("make this punchier"). Then tell the agent
@@ -48,6 +48,7 @@ On a remote machine, forward the port with `ssh -L 4173:127.0.0.1:4173 host`, or
 | `templates/themes/` | base themes: `clean`, `midnight`, `paper`, `mprime` (fonts and other theme assets live in `templates/themes/assets/` and are copied into a deck when the theme is applied) |
 | `templates/layouts/<theme>/` | layouts that belong to one theme (e.g. `mprime`) and replace the general layouts with the same name |
 | `core/slides.css` | the layout classes and utilities that every theme builds on |
+| `vendor/katex/` | KaTeX (MIT) for equations: rendered into the slide on save, so slides only need its CSS and fonts |
 
 Interactive pieces (sliders, live charts, three.js views) are **embeds**: self-contained pages under
 `decks/<deck>/assets/embeds/` that show a static poster while editing and run live when presenting and in exports.

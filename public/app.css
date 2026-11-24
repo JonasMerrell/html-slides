@@ -277,3 +277,11 @@ input[type=color] { width: 30px; height: 30px; padding: 2px; border: 1px solid v
 .hist-cap { font-size: 12.5px; margin-bottom: 6px; }
 .hist-help { grid-column: 2; font-size: 12px; }
 @media (max-width: 900px) { .hist { grid-template-columns: 1fr; } .hist-list { max-height: 24vh; border-right: 0; } .hist-compare { grid-template-columns: 1fr; } .hist-help { grid-column: 1; } }
+
+/* equations */
+.math-dialog { display: flex; flex-direction: column; gap: 10px; min-width: min(640px, 80vw); }
+.math-dialog .tex-area { min-height: 90px; font: 15px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; }
+.math-preview { min-height: 64px; padding: 14px 16px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel-2); color: var(--text); font-size: 26px; overflow-x: auto; }
+.math-preview .katex-display { margin: 0; }
+.math-error { color: var(--danger); font-size: 13px; white-space: pre-wrap; }
+.tex-src { display: block; font: 12px/1.4 ui-monospace, Menlo, monospace; padding: 6px 8px; border-radius: 6px; background: var(--code-bg); white-space: pre-wrap; word-break: break-all; }

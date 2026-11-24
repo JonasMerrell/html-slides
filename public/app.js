@@ -44,6 +44,7 @@ const ICONS = {
   back: '<path d="M15 18l-6-6 6-6"/>',
   plus: '<path d="M12 5v14M5 12h14"/>',
   text: '<path d="M4 7V5h16v2M12 5v14M9 19h6"/>',
+  sigma: '<path d="M18 7V5H6l6 7-6 7h12v-2"/>',
   image: '<rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="9" cy="10" r="2"/><path d="M21 16l-5-5L5 20"/>',
   undo: '<path d="M9 14L4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 010 11H11"/>',
   redo: '<path d="M15 14l5-5-5-5"/><path d="M20 9H9.5a5.5 5.5 0 000 11H13"/>',
@@ -103,9 +104,117 @@ function slideDoc(html, { deck = D(), themeHref, editing = false, css = '' } = {
   const base = `${location.origin}${deck ? `/decks/${deck}/` : '/templates/'}`;
   const theme = themeHref || `/decks/${deck}/theme.css?v=${S.themeV}`;
   return `<!doctype html><html><head><meta charset="utf-8"><base href="${base}">` +
-    `<link rel="stylesheet" href="/core/slides.css"><link rel="stylesheet" id="theme-css" href="${theme}">` +
+    `<link rel="stylesheet" href="/vendor/katex/katex.min.css"><link rel="stylesheet" href="/core/slides.css"><link rel="stylesheet" id="theme-css" href="${theme}">` +
     `<style>html,body{margin:0;width:1920px;height:1080px;overflow:hidden;background:transparent}${editing ? EDIT_CSS : ''}</style><style id="extra-css">${css}</style>` +
-    `</head><body>${html}</body></html>`;
+    `</head><body>${mathHtml(html)}</body></html>`;
+}
+
+// ============================================================ equations
+// <span class="math" data-tex="…"> (inline) / <div class="math display" data-tex="…">: the LaTeX lives in data-tex and
+// the KaTeX rendering is stored as the children (lib/math.mjs renders on every save; same options here, so the
+// HTML matches). Anything stale or unrendered (an agent wrote only data-tex) is rendered for display here.
+const KATEX_OPTS = { output: 'html', throwOnError: false, strict: 'ignore', trust: false };
+const texHtml = (tex, display) => (window.katex ? katex.renderToString(String(tex), { ...KATEX_OPTS, displayMode: !!display }) : '');
+const texError = (tex) => { try { katex.renderToString(String(tex), { ...KATEX_OPTS, throwOnError: true }); return null; } catch (e) { return String(e.message || e).replace(/^KaTeX parse error: /, ''); } };
+const ENT = { quot: '"', amp: '&', lt: '<', gt: '>', apos: "'", nbsp: '\u00a0', '#39': "'" };
+const unent = (s) => s.replace(/&(#x[0-9a-f]+|#\d+|\w+);/gi, (m, e) => {
+  if (e[0] === '#') return String.fromCodePoint(e[1].toLowerCase() === 'x' ? parseInt(e.slice(2), 16) : +e.slice(1));
+  return ENT[e] ?? m;
+});
+// same as mathSig in lib/math.mjs: tags → name + class, decoded text, no whitespace
+function mathSig(s) {
+  return unent(String(s ?? '').replace(/<(\/?)([a-z0-9]+)\b((?:[^>"']|"[^"]*"|'[^']*')*)>/gi, (m, close, tag, attrs) => {
+    if (close) return '';
+    const c = attrs.match(/(?:^|\s)class\s*=\s*(?:"([^"]*)"|'([^']*)')/i);
+    return `<${tag.toLowerCase()} ${(c?.[1] ?? c?.[2] ?? '').trim().replace(/\s+/g, ' ')}>`;
+  })).replace(/\s+/g, '');
+}
+const isMath = (el) => el?.nodeType === 1 && el.matches('.math[data-tex]');
+/** Render stale equations under root in place; returns how many changed. */
+function mathifyDom(root) {
+  if (!window.katex) return 0;
+  let n = 0;
+  for (const el of root.querySelectorAll('.math[data-tex]')) {
+    const r = texHtml(el.dataset.tex, el.classList.contains('display'));
+    if (r && mathSig(el.innerHTML) !== mathSig(r)) { el.innerHTML = r; n++; }
+  }
+  return n;
+}
+function mathHtml(html) {
+  if (!window.katex || !/\bdata-tex\s*=/.test(html || '')) return html;
+  const t = document.createElement('template');
+  t.innerHTML = html;
+  return mathifyDom(t.content) ? t.innerHTML : html;
+}
+
+/**
+ * Add or edit an equation. el: an existing .math element. Without el: while editing text, the equation goes in
+ * inline at the caret; otherwise a new free-standing display equation is added to the slide.
+ */
+function mathModal(el = null) {
+  if (!S.doc || !section()) return;
+  if (!window.katex) return toast('KaTeX did not load (vendor/katex)', 'error');
+  let range = null;
+  if (!el && S.editing) {
+    const sel = S.doc.getSelection();
+    if (sel.rangeCount && S.editing.contains(sel.getRangeAt(0).startContainer)) range = sel.getRangeAt(0).cloneRange();
+  }
+  const ta = codeArea(el ? el.dataset.tex : '');
+  ta.classList.add('tex-area');
+  ta.placeholder = String.raw`e.g. \sigma_a = \frac{\Delta\sigma}{2},\quad N_f = C\,\Delta\varepsilon^{-k}`;
+  const display = h('input', { type: 'checkbox', checked: el ? el.classList.contains('display') : !range });
+  const prev = h('div', { class: 'math-preview' });
+  const err = h('div', { class: 'math-error' });
+  const update = () => {
+    const tex = ta.value.trim();
+    prev.innerHTML = tex ? texHtml(tex, display.checked) : '<span class="muted">Preview</span>';
+    const e = tex ? texError(tex) : null;
+    err.textContent = e || ''; err.hidden = !e;
+  };
+  ta.addEventListener('input', update); display.addEventListener('change', update);
+  const apply = () => {
+    const tex = ta.value.trim();
+    if (!tex) return ta.focus();
+    m.close();
+    if (el) {
+      el.dataset.tex = tex;
+      el.classList.toggle('display', display.checked);
+      el.innerHTML = texHtml(tex, display.checked);
+      commit(); select(el); afterCanvasRender();
+      return;
+    }
+    const ne = S.doc.createElement(range ? 'span' : 'div');
+    ne.className = `math${display.checked ? ' display' : ''}`;
+    ne.dataset.tex = tex;
+    ne.innerHTML = texHtml(tex, display.checked);
+    if (range) {
+      ne.contentEditable = 'false';
+      range.deleteContents(); range.insertNode(ne);
+      const host = S.editing;
+      const r = S.doc.createRange(); r.setStartAfter(ne); r.collapse(true);
+      const sel = S.doc.getSelection(); sel.removeAllRanges(); sel.addRange(r);
+      E.iframe.contentWindow.focus(); host?.focus({ preventScroll: true });
+      commit(); updateOverlay();
+      return;
+    }
+    ne.classList.add('free');
+    ne.dataset.id = uid('eq');
+    ne.style.cssText = 'left: 460px; top: 440px; width: 1000px;';
+    section().append(ne);
+    stampStep(ne);
+    commit(); select(ne); afterCanvasRender();
+  };
+  ta.addEventListener('keydown', (e) => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); apply(); } });
+  const m = modal({
+    title: el ? 'Edit equation' : range ? 'Insert inline equation' : 'Add equation',
+    body: h('div', { class: 'math-dialog' },
+      h('div', { class: 'muted' }, 'LaTeX, rendered with KaTeX (no $…$ needed). Ctrl+Enter to finish.'), ta,
+      h('label', { class: 'row', style: { gap: '6px' } }, display, h('span', null, 'Display (on its own line, centred)')),
+      prev, err),
+    actions: [btn('Cancel', () => m.close(), { cls: 'ghost' }), btn(el ? 'Update' : 'Insert', apply, { cls: 'primary' })],
+  });
+  update();
+  setTimeout(() => ta.focus(), 0);
 }
 function frame(html, opts = {}) {
   const ifr = h('iframe', { tabindex: '-1', title: 'slide preview' });
@@ -226,6 +335,7 @@ function buildEditor() {
     titleIn, E.saveState,
     h('div', { class: 'grow' }),
     btn('Text', () => addTextBox(), { ic: 'text', title: 'Add a free text box' }),
+    btn('Equation', () => mathModal(), { ic: 'sigma', title: 'Add an equation (LaTeX). While editing text it goes in inline at the cursor. Double-click an equation to edit it.' }),
     btn('Image', () => fileIn.click(), { ic: 'image', title: 'Add an image (or drop / paste one onto the slide)' }), fileIn,
     E.noteBtn = btn('Note', () => setNoteMode(!S.noteMode), { ic: 'pin', title: 'Note tool (N): click anywhere on the slide to leave a note for the agent' }),
     h('div', { class: 'sep' }), E.undoBtn, E.redoBtn, h('div', { class: 'sep' }),
@@ -356,7 +466,7 @@ function updateThumb(id) {
     t.html = S.html[id];
     if (id === S.current) renderStepStrip();
     const body = t.iframe.contentDocument?.body;
-    if (body) { body.innerHTML = S.html[id]; measureThumb(id, t.iframe); } else t.iframe.srcdoc = slideDoc(S.html[id]);
+    if (body) { body.innerHTML = mathHtml(S.html[id]); measureThumb(id, t.iframe); } else t.iframe.srcdoc = slideDoc(S.html[id]);
   }, 250);
 }
 function flashThumb(id) {
@@ -456,6 +566,7 @@ function setCanvasHtml(html, keepPath = null) {
 
 function afterCanvasRender() {
   if (!S.doc) return;
+  if (section()) mathifyDom(section());
   applyStepCss();
   updateOverlay();
   measureCanvasSoon();
@@ -491,12 +602,14 @@ function pick(t) {
   if (el.closest('svg') && el.tagName.toLowerCase() !== 'svg') el = el.closest('svg');
   const emb = el.closest('figure.embed');
   if (emb && emb !== sec && sec.contains(emb)) return emb;
+  const mth = el.closest('.math[data-tex]');
+  if (mth && mth !== sec && sec.contains(mth)) el = mth; // inside KaTeX's spans: the equation (inline ones climb on to their text)
   while (el.parentElement && el.parentElement !== sec && INLINE.test(el.tagName)) el = el.parentElement;
   return el;
 }
 
 function editHostFor(el) {
-  if (!el) return null;
+  if (!el || isMath(el)) return null;
   if (el.tagName === 'LI') return el.parentElement;
   if (/^(IMG|SVG|VIDEO|IFRAME|HR|CANVAS|PICTURE|FIGURE|svg)$/.test(el.tagName)) return null;
   if (/^(UL|OL)$/.test(el.tagName)) return el;
@@ -527,6 +640,8 @@ function onCanvasDown(e) {
 
 function onCanvasDbl(e) {
   if (S.noteMode) return;
+  const mth = e.target.closest?.('.math[data-tex]');
+  if (mth && section()?.contains(mth) && !(S.editing && S.editing.contains(mth) && S.editing !== mth)) { e.preventDefault(); if (S.editing) stopEdit(); mathModal(mth); return; }
   const el = pick(e.target);
   if (!el) return;
   let host = editHostFor(S.sel && S.sel.contains(el) ? S.sel : el) || editHostFor(el);
@@ -583,6 +698,7 @@ function startEdit(el, ev) {
   S.editing = el;
   el.contentEditable = 'true';
   el.spellcheck = true;
+  el.querySelectorAll('.math[data-tex]').forEach((m) => { m.contentEditable = 'false'; }); // equations stay whole
   E.iframe.contentWindow.focus();
   el.focus({ preventScroll: true });
   const sel = S.doc.getSelection();
@@ -1033,7 +1149,7 @@ function measureDoc(doc) {
   const sr = sec.getBoundingClientRect();
   const over = []; const flagged = new Set();
   for (const el of sec.querySelectorAll('*')) {
-    if (el.closest('.notes')) continue;
+    if (el.closest('.notes') || el.closest('.katex')) continue; // an equation is measured as a whole (KaTeX clips wide internal SVGs)
     const r = el.getBoundingClientRect();
     if (!r.width && !r.height) continue;
     if (r.left - sr.left < -2 || r.top - sr.top < -2 || r.right - sr.left > W + 2 || r.bottom - sr.top > H + 2) {
@@ -1133,7 +1249,7 @@ function renderStepStrip() {
   } else {
     strip.cards.forEach((c, k) => {
       const doc = c.iframe.contentDocument, css = stepCss(root, k);
-      if (doc?.body && doc.getElementById('extra-css')) { doc.body.innerHTML = html; doc.getElementById('extra-css').textContent = css; }
+      if (doc?.body && doc.getElementById('extra-css')) { doc.body.innerHTML = mathHtml(html); doc.getElementById('extra-css').textContent = css; }
       else c.iframe.srcdoc = slideDoc(html, { css });
     });
   }
@@ -1322,6 +1438,7 @@ function elementPanel(el) {
   classIn.addEventListener('change', () => { if (classIn.value.trim()) el.setAttribute('class', classIn.value.trim()); else el.removeAttribute('class'); commit(); updateOverlay(); });
 
   const isImg = el.tagName === 'IMG';
+  const isEq = isMath(el);
   const isEmbed = el.matches('figure.embed');
   const isMedia = isImg || isEmbed;
   const live = isEmbed && !!el.querySelector(':scope > iframe.embed-frame');
@@ -1339,6 +1456,10 @@ function elementPanel(el) {
       h('span', null, `Interactive embed · ${embedNameOf(el)}`),
       h('div', { class: 'muted', style: { fontSize: '12px', lineHeight: 1.45 } }, 'Shows its poster while you edit. It runs live when presenting and in exported files.'),
       h('div', { class: 'row' }, btn(live ? '■ Stop preview' : '▶ Live preview', () => toggleEmbedPreview(el), { cls: `small ${live ? 'on' : ''}`, title: 'Run it here for a quick look (not saved)' }))) : null,
+    isEq ? h('div', { class: 'field' },
+      h('span', null, 'Equation (LaTeX)'),
+      h('code', { class: 'tex-src' }, el.dataset.tex),
+      h('div', { class: 'row' }, btn('Edit equation…', () => mathModal(el), { cls: 'small', ic: 'sigma', title: 'Or double-click it' }))) : null,
     !isMedia ? h('div', { class: 'row wrap' },
       h('div', { class: 'btn-group' }, fmt('bold', 'bold', 'fontWeight', '700', ''), fmt('italic', 'italic', 'fontStyle', 'italic', ''), fmt('underline', 'underline', 'textDecoration', 'underline', '')),
       h('div', { class: 'btn-group' }, align('left', 'alignL'), align('center', 'alignC'), align('right', 'alignR'))) : null,
