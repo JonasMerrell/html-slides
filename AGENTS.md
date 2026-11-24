@@ -46,9 +46,17 @@ core/slides.css      layout classes shared by all themes (read it to see what ex
 
 Any element can appear on a click in present mode and exports: add `data-build="N"` (N = 1, 2, …; elements with the
 same N appear together) and optionally `data-build-effect="fade"` or `"zoom"` (grows from its CSS `transform-origin`; default is pop in). → / Space reveals the next step
-before moving to the next slide, ← hides it again, and going back onto a slide shows it fully built. The editor,
-`slides render` and `slides check` always show the fully built slide, and outline build elements with a dashed purple
-line; the inspector's "Animation" field sets them. Printing shows everything. No `<script>` needed.
+before moving to the next slide, ← hides it again, and going back onto a slide shows it fully built. Printing shows
+everything. No `<script>` needed.
+
+**Steps in the editor.** A slide with builds is still one file. The editor shows it fully built (build elements
+outlined with a dashed purple line) with a strip of snapshots under it: Start (before any click), Click 1, Click 2, …
+(`[` / `]` step through them). On a snapshot the human can edit, add elements (they get that click's `data-build`),
+and leave notes. A note left on a snapshot has `"step": K` in `comments.json`, and `slides comments` prints
+`step: after click K` (0 = before any click). **Look at that snapshot, not the full slide:**
+`slides render <deck> <slide> --step K`. `slides render <deck> [slide…] --steps [--sheet]` renders every step of every
+animated slide (`<id>.stepK.png`). Without these flags `render` and `check` show the fully built slide. To ask about a
+step yourself: `slides comment <deck> <slide> --step K "…"`.
 
 ## Section timelines (`<nav class="toc">`)
 

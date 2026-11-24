@@ -97,13 +97,13 @@ const D = () => S.deck?.name;
 
 // ============================================================ slide documents
 const EDIT_CSS = `.slide [data-build]{outline:2px dashed rgba(124,77,255,.55);outline-offset:3px}.slide{cursor:default}.slide [contenteditable]{outline:none;cursor:text}::selection{background:rgba(79,124,255,.35)}body.note-mode .slide,body.note-mode .slide *{cursor:crosshair!important}`;
-function slideDoc(html, { deck = D(), themeHref, editing = false } = {}) {
+function slideDoc(html, { deck = D(), themeHref, editing = false, css = '' } = {}) {
   // absolute: Chrome's preload scanner resolves a relative <base> in srcdoc docs against about:srcdoc
   const base = `${location.origin}${deck ? `/decks/${deck}/` : '/templates/'}`;
   const theme = themeHref || `/decks/${deck}/theme.css?v=${S.themeV}`;
   return `<!doctype html><html><head><meta charset="utf-8"><base href="${base}">` +
     `<link rel="stylesheet" href="/core/slides.css"><link rel="stylesheet" id="theme-css" href="${theme}">` +
-    `<style>html,body{margin:0;width:1920px;height:1080px;overflow:hidden;background:transparent}${editing ? EDIT_CSS : ''}</style>` +
+    `<style>html,body{margin:0;width:1920px;height:1080px;overflow:hidden;background:transparent}${editing ? EDIT_CSS : ''}</style><style id="extra-css">${css}</style>` +
     `</head><body>${html}</body></html>`;
 }
 function frame(html, opts = {}) {
@@ -251,14 +251,15 @@ function buildEditor() {
   E.slidebox = h('div', { class: 'slidebox' }, E.iframe, E.overlay);
   E.stage = h('div', { class: 'stage' }, E.slidebox);
   E.status = h('div', { class: 'stage-status' });
+  E.steps = h('div', { class: 'step-strip', hidden: true });
   E.banner = h('div', { class: 'banner', hidden: true });
   E.modeChip = h('div', { class: 'mode-chip', hidden: true }, 'Note tool: click anywhere on the slide · Esc to exit');
   E.stageWrap = h('main', { class: 'stage-wrap', onmousedown: (e) => {
     if (E.pop?.contains(e.target)) return;
     if (!E.stage.contains(e.target)) { closePop(); stopEdit(); select(null); }
   } },
-    E.stage, E.status, E.banner, E.modeChip,
-    h('div', { class: 'hint' }, h('span', null, 'Click select · Drag move · Double-click edit text · N note · Esc parent · ⇧ lock axis · Alt no snap')));
+    E.stage, E.steps, E.status, E.banner, E.modeChip,
+    h('div', { class: 'hint' }, h('span', null, 'Click select · Drag move · Double-click edit text · N note · [ ] animation steps · Esc parent · ⇧ lock axis · Alt no snap')));
   E.inspector = h('aside', { class: 'inspector' });
 
   $('#app').replaceChildren(h('div', { class: 'editor' }, topbar, sidebar, E.stageWrap, E.inspector));
@@ -280,7 +281,8 @@ function buildEditor() {
 function fitStage() {
   if (!E.stageWrap) return;
   const pad = 40;
-  const s = Math.max(0.05, Math.min((E.stageWrap.clientWidth - pad * 2) / W, (E.stageWrap.clientHeight - pad * 2 - 24) / H));
+  const strip = E.steps && !E.steps.hidden ? STRIP_H : 0;
+  const s = Math.max(0.05, Math.min((E.stageWrap.clientWidth - pad * 2) / W, (E.stageWrap.clientHeight - pad * 2 - 24 - strip) / H));
   S.scale = s;
   E.stage.style.width = `${W * s}px`;
   E.stage.style.height = `${H * s}px`;
@@ -339,6 +341,7 @@ function updateBadges() {
     const over = S.status[id]?.overflow?.length;
     t.badges.replaceChildren(...[
       over ? h('span', { class: 'badge warn', title: `Overflows: ${S.status[id].overflow.join(', ')}` }, '!') : null,
+      stepsIn(S.html[id]) ? h('span', { class: 'badge steps', title: `${stepsIn(S.html[id])} click-build steps (animations)` }, `▶ ${stepsIn(S.html[id])}`) : null,
       n ? h('span', { class: 'badge', title: `${n} open note${n > 1 ? 's' : ''}` }, n) : null].filter(Boolean));
   }
 }
@@ -350,6 +353,7 @@ function updateThumb(id) {
     const t = thumbs.get(id);
     if (!t) return;
     t.html = S.html[id];
+    if (id === S.current) renderStepStrip();
     const body = t.iframe.contentDocument?.body;
     if (body) { body.innerHTML = S.html[id]; measureThumb(id, t.iframe); } else t.iframe.srcdoc = slideDoc(S.html[id]);
   }, 250);
@@ -395,10 +399,12 @@ function selectSlide(id) {
   closePop();
   S.current = id;
   S.sel = null;
+  S.step = null;
   S.hist[id] ??= { stack: [S.html[id]], i: 0 };
   hideBanner();
   highlightThumb();
   setCanvasHtml(S.html[id]);
+  renderStepStrip();
   history.replaceState(null, '', `#/deck/${D()}/${id}`);
   renderInspector();
   updateUndoButtons();
@@ -449,6 +455,7 @@ function setCanvasHtml(html, keepPath = null) {
 
 function afterCanvasRender() {
   if (!S.doc) return;
+  applyStepCss();
   updateOverlay();
   measureCanvasSoon();
   S.doc.fonts?.ready.then(() => { updateOverlay(); measureCanvasSoon(); });
@@ -702,6 +709,7 @@ function addTextBox() {
   el.style.cssText = 'left: 660px; top: 490px; width: 600px;';
   el.textContent = 'New text';
   section().append(el);
+  stampStep(el);
   commit();
   startEdit(el);
 }
@@ -724,6 +732,7 @@ async function insertImageFile(file, at = null, replace = null, uploaded = null)
     const w = 720;
     img.style.cssText = `left: ${Math.round((at?.x ?? W / 2) - w / 2)}px; top: ${Math.round((at?.y ?? H / 2) - 200)}px; width: ${w}px;`;
     section().append(img);
+    stampStep(img);
     img.addEventListener('load', () => updateOverlay(), { once: true });
     commit();
     select(img);
@@ -893,6 +902,7 @@ function onKey(e) {
   if (mod && key === 'd') { e.preventDefault(); duplicateEl(); return; }
   if (mod || e.altKey) return;
   if (key === 'n') { e.preventDefault(); setNoteMode(!S.noteMode); return; }
+  if ((key === '[' || key === ']') && curSteps()) { e.preventDefault(); setStep(Math.max(0, Math.min(curSteps(), effStep() + (key === ']' ? 1 : -1)))); return; }
   if (e.key === 'Escape' && (E.pop || S.noteMode)) { if (E.pop) closePop(); else setNoteMode(false); return; }
   const step = e.shiftKey ? 10 : 1;
   switch (e.key) {
@@ -933,6 +943,7 @@ function commit() {
   const html = serialize();
   if (norm(html) === norm(S.html[id])) return;
   S.html[id] = html;
+  applyStepCss();
   const H = (S.hist[id] ??= { stack: [html], i: 0 });
   H.stack.splice(H.i + 1);
   H.stack.push(html);
@@ -1053,6 +1064,90 @@ function measureThumb(id, iframe) {
   (doc.fonts?.ready || Promise.resolve()).then(() => setTimeout(run, 50));
 }
 
+// ============================================================ click-build steps (animation snapshots)
+// One slide file; the editor can show it as it looks after each click. S.step: null = fully built (the default
+// view), k = after k clicks (0 = before any). Notes left on a snapshot remember it ("step"), elements added while
+// a snapshot is shown appear on that click, and the strip under the slide shows every snapshot.
+const STRIP_H = 112;
+const buildVals = (root) => [...new Set([...root.querySelectorAll('[data-build]')].map((e) => parseFloat(e.dataset.build)).filter(Number.isFinite))].sort((a, b) => a - b);
+const parseSlide = (html) => { const t = document.createElement('template'); t.innerHTML = html || ''; return t.content; };
+const stepsIn = (html) => new Set([...String(html || '').matchAll(/\sdata-build="([^"]*)"/g)].map((m) => parseFloat(m[1])).filter(Number.isFinite)).size;
+const curSteps = () => (section() ? buildVals(section()).length : 0);
+const effStep = () => { const n = curSteps(); return n ? Math.min(S.step ?? n, n) : null; };
+const noteStep = () => (S.step != null && curSteps() ? Math.min(S.step, curSteps()) : null);
+const stepName = (k) => (k ? `click ${k}` : 'start');
+function stepCss(root, k, { mark = false } = {}) {
+  const vals = buildVals(root);
+  if (k == null || !vals.length) return '';
+  k = Math.min(k, vals.length);
+  const lim = k ? vals[k - 1] : -Infinity;
+  const raw = [...new Set([...root.querySelectorAll('[data-build]')].map((e) => e.getAttribute('data-build')))];
+  const sel = (r) => `.slide [data-build="${CSS.escape(r)}"]`;
+  const hide = raw.filter((r) => parseFloat(r) > lim).map(sel);
+  const now = k ? raw.filter((r) => parseFloat(r) === lim).map(sel) : [];
+  return (hide.length ? `${hide.join(',')}{visibility:hidden!important}` : '') +
+    (mark && now.length ? `${now.join(',')}{outline:3px solid #7c4dff!important;outline-offset:3px}` : '');
+}
+function applyStepCss() {
+  if (!S.doc?.head) return;
+  let st = S.doc.getElementById('step-css');
+  if (!st) { st = S.doc.createElement('style'); st.id = 'step-css'; S.doc.head.append(st); }
+  st.textContent = S.step != null && section() ? stepCss(section(), S.step, { mark: true }) : '';
+  if (S.sel?.isConnected && S.doc.defaultView.getComputedStyle(S.sel).visibility === 'hidden') select(null);
+}
+function setStep(k) {
+  if (S.editing) stopEdit();
+  closePop();
+  S.step = k;
+  applyStepCss(); updateOverlay(); renderMarkers(); renderStepStrip();
+}
+function stampStep(el) {
+  const vals = section() ? buildVals(section()) : [];
+  if (S.step == null || !vals.length || S.step === 0) return;
+  const k = Math.min(S.step, vals.length);
+  el.dataset.build = String(vals[k - 1]);
+  toast(`Added to click ${k}: it appears on that click when presenting`);
+}
+const strip = { id: null, n: -1, cards: [] };
+function renderStepStrip() {
+  if (!E.steps) return;
+  const html = S.current ? S.html[S.current] : '';
+  const root = parseSlide(html);
+  const n = buildVals(root).length;
+  const was = !E.steps.hidden;
+  E.steps.hidden = !n;
+  if (was !== !!n) fitStage();
+  if (!n) { E.steps.replaceChildren(); strip.n = -1; strip.id = null; return; }
+  if (strip.id !== S.current || strip.n !== n) {
+    strip.id = S.current; strip.n = n;
+    strip.cards = Array.from({ length: n + 1 }, (_, k) => {
+      const f = frame(html, { css: stepCss(root, k) });
+      const badge = h('span', { class: 'badge', hidden: true });
+      const el = h('button', { class: 'step-card', title: k ? `After click ${k} — notes and new elements go to this step` : 'Before any click', onclick: () => setStep(k) },
+        f, h('span', { class: 'step-label' }, k ? `Click ${k}` : 'Start'), badge);
+      return { el, iframe: f.firstElementChild, badge };
+    });
+    E.steps.replaceChildren(h('div', { class: 'step-title' }, 'Animation', h('span', null, '[ ]')), ...strip.cards.map((c) => c.el));
+    requestAnimationFrame(() => fitFrames(E.steps));
+  } else {
+    strip.cards.forEach((c, k) => {
+      const doc = c.iframe.contentDocument, css = stepCss(root, k);
+      if (doc?.body && doc.getElementById('extra-css')) { doc.body.innerHTML = html; doc.getElementById('extra-css').textContent = css; }
+      else c.iframe.srcdoc = slideDoc(html, { css });
+    });
+  }
+  updateStepBadges();
+}
+function updateStepBadges() {
+  if (!E.steps || E.steps.hidden) return;
+  const cur = effStep();
+  strip.cards.forEach((c, k) => {
+    c.el.classList.toggle('active', k === cur);
+    const cnt = S.comments.filter((x) => x.slide === S.current && x.status !== 'resolved' && x.step === k).length;
+    c.badge.hidden = !cnt; c.badge.textContent = cnt;
+  });
+}
+
 // ============================================================ overlay markers (comments)
 function notePos(c) {
   if (c.x != null) return { x: c.x, y: c.y, pin: true };
@@ -1063,7 +1158,9 @@ function notePos(c) {
 }
 function renderMarkers() {
   if (!E.markers) return;
-  const open = S.comments.filter((c) => c.slide === S.current && c.status !== 'resolved');
+  const k = effStep();
+  const open = S.comments.filter((c) => c.slide === S.current && c.status !== 'resolved' && (c.step == null || k == null || c.step === k));
+  updateStepBadges();
   const marks = open.map((c) => {
     const p = notePos(c);
     if (!p) return null;
@@ -1131,7 +1228,7 @@ function openNewNote(x, y, el) {
       target = el.dataset.id;
     }
     try {
-      const c = await api.post(`/api/decks/${D()}/comments`, { slide: S.current, target, text, x: at.x, y: at.y, near: snippet || null });
+      const c = await api.post(`/api/decks/${D()}/comments`, { slide: S.current, target, text, x: at.x, y: at.y, near: snippet || null, step: noteStep() });
       S.comments.push(c);
       closePop(); renderInspector(); updateBadges(); renderMarkers();
       toast(`Note ${c.id} added`, 'ok');
@@ -1142,7 +1239,7 @@ function openNewNote(x, y, el) {
     if (e.key === 'Escape') { e.preventDefault(); closePop(); }
   });
   const pop = h('div', { class: 'note-pop' },
-    h('div', { class: 'on' }, el ? ['On ', h('b', null, describe(el)), snippet ? ` — “${snippet}”` : ''] : 'On the slide background'),
+    h('div', { class: 'on' }, el ? ['On ', h('b', null, describe(el)), snippet ? ` — “${snippet}”` : ''] : 'On the slide background', noteStep() != null ? h('span', { class: 'step-tag' }, stepName(noteStep())) : null),
     ta,
     h('div', { class: 'acts' }, h('span', { class: 'hint-k' }, 'Enter save · ⇧Enter newline'),
       btn('Cancel', () => closePop(), { cls: 'small ghost' }), btn('Add note', save, { cls: 'small primary' })));
@@ -1161,7 +1258,7 @@ function openViewNote(c) {
     catch (e) { toast(e.message, 'error'); }
   };
   const pop = h('div', { class: 'note-pop' },
-    h('div', { class: 'on' }, h('b', null, c.id), c.author === 'agent' ? ' · from the agent' : '', c.target ? [' · on ', h('b', null, `#${c.target}`)] : ''),
+    h('div', { class: 'on' }, h('b', null, c.id), c.author === 'agent' ? ' · from the agent' : '', c.target ? [' · on ', h('b', null, `#${c.target}`)] : '', c.step != null ? h('span', { class: 'step-tag' }, stepName(c.step)) : null),
     h('div', { class: 'text' }, c.text),
     c.reply ? h('div', { class: 'reply' }, c.reply) : null,
     h('div', { class: 'acts' },
@@ -1434,7 +1531,7 @@ function commentsPanel() {
       target = S.sel.dataset.id;
     }
     try {
-      const c = await api.post(`/api/decks/${D()}/comments`, { slide: S.current, target, text });
+      const c = await api.post(`/api/decks/${D()}/comments`, { slide: S.current, target, text, step: noteStep() });
       S.comments.push(c);
       renderInspector(); updateBadges(); updateOverlay();
     } catch (e) { toast(e.message, 'error'); }
@@ -1467,7 +1564,8 @@ function commentView(c) {
       c.author === 'agent' ? h('span', null, '· agent') : null,
       S.showAllComments && c.slide ? h('span', { class: 'target', onclick: () => selectSlide(c.slide) }, c.slide) : null,
       c.target ? h('span', { class: 'target', onclick: () => { if (c.slide !== S.current) selectSlide(c.slide); const el = section()?.querySelector(`[data-id="${CSS.escape(c.target)}"]`); if (el) select(el); } }, `#${c.target}`) : null,
-      c.x != null && c.status !== 'resolved' ? h('span', { class: 'target', title: 'Show on slide', onclick: () => { if (c.slide !== S.current) selectSlide(c.slide); openViewNote(c); } }, '📍') : null,
+      c.step != null ? h('span', { class: 'target step-tag', title: 'Show this animation step', onclick: () => { if (c.slide !== S.current) selectSlide(c.slide); setStep(c.step); } }, stepName(c.step)) : null,
+      c.x != null && c.status !== 'resolved' ? h('span', { class: 'target', title: 'Show on slide', onclick: () => { if (c.slide !== S.current) selectSlide(c.slide); if (c.step != null) setStep(c.step); openViewNote(c); } }, '📍') : null,
       h('span', { style: { flex: 1 } }), resolved ? '✓ resolved' : 'open'),
     h('div', { class: 'body' }, c.text),
     c.reply ? h('div', { class: 'reply' }, c.reply) : null,

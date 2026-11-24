@@ -34,7 +34,7 @@ Slides
 Agent ↔ human loop
   slides comments <deck> [--all]                 notes the human left (open only by default)
   slides resolve <deck> <comment-id> [--reply "what you did"]
-  slides comment <deck> <slide> [--target DATA-ID] "text"   leave a note/question for the human
+  slides comment <deck> <slide> [--target DATA-ID] [--step K] "text"   leave a note/question for the human
 
 Interactive embeds (live only in present mode and exports; posters everywhere else)
   slides embed <deck> <name> [--from DIR]        scaffold assets/embeds/<name>/ (index.html, app.js, poster.png)
@@ -43,8 +43,10 @@ Interactive embeds (live only in present mode and exports; posters everywhere el
 
 Quality
   slides check <deck>                            lint + real-browser overflow check (needs Chrome)
-  slides render <deck> [slide...] [--out DIR] [--sheet] [--cols N]
-                                                 screenshot slides to PNG (contact sheet with --sheet)
+  slides render <deck> [slide...] [--out DIR] [--sheet] [--cols N] [--step K | --steps]
+                                                 screenshot slides to PNG (contact sheet with --sheet);
+                                                 --step K shows click builds after K clicks (0 = none yet),
+                                                 --steps renders every click step of slides that have builds
   slides export <deck> [--out FILE]              single self-contained HTML (assets inlined)
   slides serve [--port 4173] [--host H]          start the web editor
 `;
@@ -82,6 +84,7 @@ function printComments(d, list) {
   for (const c of list) {
     const where = [c.slide && `slide ${c.slide}`, c.target && `[data-id="${c.target}"]`, c.x != null && `at (${c.x}, ${c.y}) of 1920×1080`].filter(Boolean).join(' ');
     console.log(`${c.id}  ${c.status.toUpperCase().padEnd(8)} ${c.author === 'agent' ? '(agent) ' : ''}${where || 'deck'}`);
+    if (c.step != null) console.log(`    step: ${c.step ? `after click ${c.step}` : 'start (before any click)'} — see it: slides render ${d} ${c.slide} --step ${c.step}`);
     if (c.near) console.log(`    on: "${c.near}"`);
     console.log(`    ${c.text.replace(/\n/g, '\n    ')}`);
     if (c.reply) console.log(`    ↳ ${c.reply.replace(/\n/g, '\n      ')}`);
@@ -227,7 +230,7 @@ async function main() {
 
     case 'comment': {
       const d = need(rest[0], 'deck name');
-      const c = store.addComment(d, { slide: need(rest[1], 'slide id'), target: opt.target, text: need(rest[2], 'comment text'), author: 'agent' });
+      const c = store.addComment(d, { slide: need(rest[1], 'slide id'), target: opt.target, text: need(rest[2], 'comment text'), author: 'agent', step: opt.step });
       console.log(`Added ${c.id}`);
       return;
     }
@@ -273,7 +276,16 @@ async function main() {
 
     case 'render': {
       const d = need(rest[0], 'deck name');
-      const ids = rest.length > 1 ? rest.slice(1) : store.readMeta(d).slides;
+      let ids = rest.length > 1 ? rest.slice(1) : store.readMeta(d).slides;
+      if (typeof opt.steps === 'string') { ids = rest.length > 1 ? [...ids, opt.steps] : [opt.steps]; opt.steps = true; }
+      if (opt.step !== undefined) {
+        const k = Number(opt.step);
+        if (!Number.isInteger(k) || k < 0) fail('--step takes a click number: 0 = before any click, 1 = after the first click, …');
+        ids = ids.map((id) => ({ id, step: k }));
+      } else if (opt.steps) {
+        // every click-build snapshot of each slide that has builds (other slides render once)
+        ids = ids.flatMap((id) => { const n = store.buildStepsOf(store.readSlide(d, id)).length; return n ? Array.from({ length: n + 1 }, (_, k) => ({ id, step: k })) : [id]; });
+      }
       const { renderPngs } = await import('../lib/chrome.mjs');
       const out = typeof opt.out === 'string' ? opt.out : path.join(store.deckDir(d), '.renders');
       const files = await renderPngs(d, ids, out, { sheet: !!opt.sheet, cols: Number(opt.cols) || 3 });
