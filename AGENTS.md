@@ -53,7 +53,8 @@ everything. No `<script>` needed.
 outlined with a dashed purple line) with a strip of snapshots under it: Start (before any click), Click 1, Click 2, …
 (`[` / `]` step through them). On a snapshot the human can edit, add elements (they get that click's `data-build`),
 and leave notes. A note left on a snapshot has `"step": K` in `comments.json`, and `slides comments` prints
-`step: after click K` (0 = before any click). **Look at that snapshot, not the full slide:**
+`step: after click K` (0 = before any click). The strip's **+** card adds a new click (it stays as an empty "Click K"
+until something is put on it), and **Assign to click K** in the inspector moves a selected element onto the click shown. **Look at that snapshot, not the full slide:**
 `slides render <deck> <slide> --step K`. `slides render <deck> [slide…] --steps [--sheet]` renders every step of every
 animated slide (`<id>.stepK.png`). Without these flags `render` and `check` show the fully built slide. To ask about a
 step yourself: `slides comment <deck> <slide> --step K "…"`.
@@ -207,6 +208,13 @@ multi-MB data cheap. Expect the export to grow by roughly the size of each embed
 
 Several agents (and the human) can work on one deck at the same time. Every write is atomic, and the editor shows
 each change within a second. To avoid overwriting one another:
+- **Claim the slides you work on.** Pick a short unique name (`export SLIDES_AGENT=agent-results`, or pass `--as`).
+  `slides claims <deck>` shows who holds what. `slides add … --as <name>` claims the new slide for you;
+  `slides claim <deck> <id…> --as <name> --note "…"` claims assigned ones (claiming again renews; claims lapse after
+  2 h). Claiming a slide someone else holds fails unless `--force`. When you're done:
+  `slides release <deck> --all --as <name>`. Claims are advisory: the human always wins (the editor shows a badge and a
+  "<name> is editing this slide" bar with a **Take over** button that releases your claim), and CLI commands that change
+  someone else's claimed slide only warn. If your claim disappears, the human took the slide over: stop editing it.
 - **Add slides only with `slides add … --after <id>`** (or `--stdin`), and reorder with `slides mv`. Never hand-edit
   `deck.json`: two agents rewriting it at once can lose each other's order changes. A slide file created directly
   is appended to the order automatically.

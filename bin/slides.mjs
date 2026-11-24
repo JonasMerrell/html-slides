@@ -22,7 +22,8 @@ Decks
 Slides
   slides path <deck> [slide]                     print the file path to edit directly
   slides show <deck> <slide>                     print slide HTML
-  slides add <deck> [--layout L] [--title T] [--id ID] [--after ID | --at N] [--html-file F | --stdin]
+  slides add <deck> [--layout L] [--title T] [--id ID] [--after ID | --at N] [--html-file F | --stdin] [--as NAME]
+                                                 (--as also claims the new slide for NAME)
   slides dup <deck> <slide>                      duplicate (inserted after the original)
   slides rm <deck> <slide>
   slides mv <deck> <slide> (--after ID | --at N | --first)
@@ -36,6 +37,16 @@ Slides
   slides toc <deck> --set "A|B|C" | --sync [--from ID]
                                                  relabel the timeline on every slide, or copy one slide's to all
                                                  (default source: the most recently edited slide)
+
+Several agents at once (claims are advisory: they warn, never block; they lapse after ${store.CLAIM_TTL_MS / 3600000} h)
+  slides claim <deck> <slide...> --as NAME [--note "what you're doing"] [--force]
+                                                 mark slides as yours (re-claiming renews); fails if another
+                                                 name holds one, unless --force. NAME may come from $SLIDES_AGENT
+  slides release <deck> (<slide...> | --all) --as NAME
+                                                 give your slides back when you're done
+  slides claims <deck>                           who is working on which slide
+  Commands that change a slide (rm, mv, rename, restore, target, math, figures --refresh) warn when another
+  name holds it; pass --as NAME (or set SLIDES_AGENT) so your own claims don't warn.
 
 Talk timing (presenter view: press P while presenting)
   slides target <deck>                           talk length and per-slide target times
@@ -91,6 +102,14 @@ const [cmd, ...rest] = pos;
 
 const need = (v, what) => { if (v === undefined || v === true || v === '') { fail(`Missing ${what}. Run "slides help".`); } return v; };
 const fmtSec = (s) => { s = Math.round(s); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`; };
+// claims: warn (never block) when a command changes a slide someone else is working on
+function warnClaimed(d, ids) {
+  for (const id of ids) {
+    const c = store.claimedByOther(d, id, opt.as);
+    if (c) console.error(`warning: "${id}" is claimed by ${c.by}${c.note ? ` (${c.note})` : ''}: they are working on it. Prefer a note: slides comment ${d} ${id} "…"`);
+  }
+}
+const ago = (iso) => { const m = Math.round((Date.now() - Date.parse(iso)) / 60000); return m < 1 ? 'just now' : m < 60 ? `${m} min ago` : `${Math.floor(m / 60)} h ${m % 60} min ago`; };
 function fail(msg) { console.error(`error: ${msg}`); process.exit(1); }
 
 // equations read as their LaTeX ($…$) rather than KaTeX's markup
@@ -142,6 +161,7 @@ async function main() {
       const meta = store.readMeta(d);
       const comments = store.readComments(d).filter((c) => c.status !== 'resolved');
       const status = store.readStatus(d);
+      const claims = store.readClaims(d);
       console.log(`# ${meta.title}  (deck: ${d}, theme: ${meta.theme}, ${meta.slides.length} slides)\n`);
       meta.slides.forEach((id, i) => {
         const html = store.readSlide(d, id);
@@ -150,6 +170,7 @@ async function main() {
         const n = comments.filter((c) => c.slide === id).length;
         if (n) flags.push(`${n} open comment${n > 1 ? 's' : ''}`);
         if (status[id]?.overflow?.length) flags.push(`OVERFLOW: ${status[id].overflow.join(', ')}`);
+        if (claims[id]) flags.push(`claimed by ${claims[id].by}`);
         console.log(`${String(i + 1).padStart(2)}. ${id}  [${layoutOf(html)}]${flags.length ? '  ⚠ ' + flags.join('; ') : ''}`);
         console.log(`    ${t.length > 160 ? t.slice(0, 157) + '…' : t}`);
         const notes = notesOf(html);
@@ -193,6 +214,7 @@ async function main() {
         id: opt.id, after: opt.after, index: opt.at !== undefined ? Number(opt.at) - 1 : undefined,
       });
       console.log(`Added ${id} → ${rel(store.slidePath(d, id))}`);
+      if (store.agentName(opt.as)) { store.claimSlides(d, [id], { as: opt.as }); console.log(`Claimed ${id} for ${store.agentName(opt.as)} (release with: slides release ${d} ${id} --as ${store.agentName(opt.as)})`); }
       return;
     }
 
@@ -203,10 +225,11 @@ async function main() {
       return;
     }
 
-    case 'rm': store.deleteSlide(need(rest[0], 'deck name'), need(rest[1], 'slide id')); console.log(`Removed ${rest[1]}`); return;
+    case 'rm': warnClaimed(rest[0], [rest[1]]); store.deleteSlide(need(rest[0], 'deck name'), need(rest[1], 'slide id')); console.log(`Removed ${rest[1]}`); return;
 
     case 'mv': {
       const d = need(rest[0], 'deck name'), id = need(rest[1], 'slide id');
+      warnClaimed(d, [id]);
       if (opt.first) store.moveSlide(d, id, { index: 0 });
       else if (opt.after) store.moveSlide(d, id, { after: opt.after });
       else store.moveSlide(d, id, { index: Number(need(opt.at, '--after, --at or --first')) - 1 });
@@ -214,7 +237,7 @@ async function main() {
       return;
     }
 
-    case 'rename': store.renameSlide(need(rest[0], 'deck name'), need(rest[1], 'slide id'), need(rest[2], 'new id')); console.log(`Renamed ${rest[1]} → ${rest[2]}`); return;
+    case 'rename': warnClaimed(rest[0], [rest[1]]); store.renameSlide(need(rest[0], 'deck name'), need(rest[1], 'slide id'), need(rest[2], 'new id')); console.log(`Renamed ${rest[1]} → ${rest[2]}`); return;
 
     case 'order': {
       const d = need(rest[0], 'deck name');
@@ -245,6 +268,7 @@ async function main() {
       const d = need(rest[0], 'deck name');
       if (rest[1]) {
         if (opt.seconds === undefined || opt.seconds === true) fail('give --seconds N (0 removes the target)');
+        warnClaimed(d, [rest[1]]);
         const v = store.setSlideTime(d, rest[1], +opt.seconds);
         console.log(v ? `${rest[1]}: target ${fmtSec(v)}` : `${rest[1]}: target removed`);
         return;
@@ -272,6 +296,33 @@ async function main() {
       return;
     }
 
+    case 'claim': {
+      const d = need(rest[0], 'deck name');
+      const ids = [...rest.slice(1), ...(typeof opt.force === 'string' ? [opt.force] : [])];
+      if (!ids.length) fail('Name the slide(s) to claim. Run "slides help".');
+      store.claimSlides(d, ids, { as: opt.as, note: typeof opt.note === 'string' ? opt.note : undefined, force: !!opt.force });
+      console.log(`Claimed ${ids.join(', ')} for ${store.agentName(opt.as)} (lapses after ${store.CLAIM_TTL_MS / 3600000} h; claim again to renew).`);
+      console.log(`When you're done: slides release ${d} ${ids.join(' ')} --as ${store.agentName(opt.as)}`);
+      return;
+    }
+    case 'release': {
+      const d = need(rest[0], 'deck name');
+      const ids = [...rest.slice(1), ...(typeof opt.all === 'string' ? [opt.all] : [])];
+      if (!ids.length && !opt.all) fail('Name the slide(s) to release, or --all. Run "slides help".');
+      const done = store.releaseSlides(d, opt.all ? null : ids, { as: opt.as });
+      console.log(done.length ? `Released ${done.join(', ')}` : `Nothing to release: ${store.agentName(opt.as)} holds no ${opt.all ? '' : 'such '}claims in ${d}.`);
+      return;
+    }
+    case 'claims': {
+      const d = need(rest[0], 'deck name');
+      const cl = store.readClaims(d), ids = Object.keys(cl);
+      if (!ids.length) { console.log(`No slide in "${d}" is claimed.`); return; }
+      const order = store.readMeta(d).slides;
+      ids.sort((a, b) => order.indexOf(a) - order.indexOf(b));
+      for (const id of ids) console.log(`${id.padEnd(24)} ${cl[id].by.padEnd(16)} since ${ago(cl[id].since).padEnd(14)} renewed ${ago(cl[id].renewed)}${cl[id].note ? `  — ${cl[id].note}` : ''}`);
+      return;
+    }
+
     case 'history': {
       const d = need(rest[0], 'deck name'), id = need(rest[1], 'slide id');
       if (typeof opt.show === 'string') { process.stdout.write(store.readVersion(d, id, store.resolveVersion(d, id, opt.show))); return; }
@@ -289,6 +340,7 @@ async function main() {
 
     case 'restore': {
       const d = need(rest[0], 'deck name'), id = need(rest[1], 'slide id');
+      warnClaimed(d, [id]);
       const v = store.restoreVersion(d, id, need(rest[2], 'version (see: slides history)'));
       console.log(`Restored ${id} to ${v} (undo with: slides restore ${d} ${id} -1)`);
       return;
@@ -374,6 +426,7 @@ async function main() {
       if (!pick.length) { console.log(targets.length ? `No figures match ${targets.join(', ')}` : '✓ every figure is up to date (use --all to re-run anyway)'); return; }
       const timeout = (Number(opt.timeout) || 120) * 1000;
       let failed = 0;
+      warnClaimed(d, [...new Set(pick.map((f) => f.slide))]);
       for (const f of pick) {
         process.stdout.write(`running ${f.source} → ${f.out} … `);
         const r = await runFigure(d, f, { timeout });
@@ -393,7 +446,7 @@ async function main() {
         const list = findMath(html);
         eqs += list.length;
         for (const m of mathIssues(html)) if (m.level === 'error') console.log(`  ${id.padEnd(20)} ${m.msg}`);
-        if (list.length && renderMathIn(html) !== html) { store.writeSlide(d, id, html, { source: 'math' }); n++; console.log(`rendered ${id}`); }
+        if (list.length && renderMathIn(html) !== html) { warnClaimed(d, [id]); store.writeSlide(d, id, html, { source: 'math' }); n++; console.log(`rendered ${id}`); }
       }
       console.log(eqs ? `${eqs} equation(s); ${n} slide(s) re-rendered.` : 'No equations (class="math" with data-tex).');
       return;

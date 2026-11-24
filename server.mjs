@@ -69,7 +69,7 @@ async function scan() {
     const dir = path.join(store.DECKS_DIR, e.name);
     const ls = async (sub) => { try { return (await fsp.readdir(path.join(dir, sub))).filter((f) => !f.startsWith('.')); } catch { return []; } };
     const [slides, assets] = await Promise.all([ls('slides'), ls('assets')]);
-    for (const f of ['deck.json', 'theme.css', 'comments.json', ...slides.filter((f) => f.endsWith('.html')).map((f) => 'slides/' + f), ...assets.map((f) => 'assets/' + f)]) paths.push([e.name, f]);
+    for (const f of ['deck.json', 'theme.css', 'comments.json', 'claims.json', ...slides.filter((f) => f.endsWith('.html')).map((f) => 'slides/' + f), ...assets.map((f) => 'assets/' + f)]) paths.push([e.name, f]);
   }));
   let i = 0;
   await Promise.all(Array.from({ length: FS_JOBS }, async () => {
@@ -143,7 +143,7 @@ route('POST', '/api/decks', async (req, res) => {
 });
 route('GET', '/api/decks/:d', (req, res, p) => {
   const deck = store.readDeck(p.d);
-  json(res, deck);
+  json(res, { ...deck, claims: store.readClaims(p.d) });
   for (const s of deck.slides) queueHistory(p.d, s.id, { onlyIfNone: true }); // first copy of each slide, so the first change can be undone
 });
 route('PUT', '/api/decks/:d', async (req, res, p) => json(res, store.updateDeck(p.d, await readJson(req))));
@@ -206,6 +206,9 @@ const DIAG = [];
 route('POST', '/api/diag', async (req, res) => { DIAG.push({ at: new Date().toISOString(), ua: req.headers['user-agent'], ...(await readJson(req)) }); if (DIAG.length > 50) DIAG.shift(); json(res, { ok: true }); });
 route('GET', '/api/diag', (req, res) => json(res, DIAG));
 
+// claims: agents mark the slides they are working on (slides claim); the human can always take a slide over
+route('GET', '/api/decks/:d/claims', (req, res, p) => json(res, store.readClaims(p.d)));
+route('DELETE', '/api/decks/:d/claims/:id', (req, res, p) => json(res, { released: store.releaseSlides(p.d, [p.id], { any: true }) }));
 route('GET', '/api/decks/:d/comments', (req, res, p) => json(res, store.readComments(p.d)));
 route('POST', '/api/decks/:d/comments', async (req, res, p) => json(res, store.addComment(p.d, await readJson(req)), 201));
 route('PUT', '/api/decks/:d/comments/:cid', async (req, res, p) => json(res, store.updateComment(p.d, p.cid, await readJson(req))));

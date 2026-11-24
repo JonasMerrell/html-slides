@@ -9,6 +9,8 @@ decks/*/.history/
 decks/*
 !decks/getting-started/
 decks/getting-started/comments.json
+decks/*/claims.json
+decks/*/rehearsals.json
 # Local-only agent notes for local themes
 AGENTS.local.md
 .claude/settings.local.json

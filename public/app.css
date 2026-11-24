@@ -290,3 +290,15 @@ input[type=color] { width: 30px; height: 30px; padding: 2px; border: 1px solid v
 .marker.fig-badge.no-source, .marker.fig-badge.error { background: var(--warn); color: #1b1b1b; }
 .fig-status { font-weight: 700; color: #e8710a; }
 .fig-status.ok { color: #2e9d5b; }
+
+/* claims: an agent is working on this slide */
+.claim-bar { position: absolute; top: 12px; left: 16px; z-index: 3; max-width: calc(100% - 32px); background: var(--panel); border: 1px solid #0f9d8a; border-radius: 10px; padding: 6px 8px 6px 10px; display: flex; gap: 8px; align-items: center; font-size: 13px; box-shadow: 0 6px 20px rgba(0,0,0,.15); }
+.claim-bar[hidden] { display: none; }
+.claim-dot { width: 8px; height: 8px; border-radius: 50%; background: #0f9d8a; flex: none; animation: claim-pulse 2s ease-in-out infinite; }
+@keyframes claim-pulse { 50% { opacity: .35; } }
+.badge.claim { background: #0f9d8a; color: #fff; max-width: 96px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* step strip: new click (+) and a click that has nothing on it yet */
+.step-card.add .step-plus { aspect-ratio: 16 / 9; display: grid; place-items: center; border: 2px dashed var(--line-2); border-radius: 4px; font: 300 30px/1 Inter, system-ui, sans-serif; color: var(--text-2); }
+.step-card.add:hover .step-plus { border-color: #7c4dff; color: #7c4dff; }
+.step-card.pending .frame { opacity: .55; }
+.step-card.pending .step-label { font-style: italic; }

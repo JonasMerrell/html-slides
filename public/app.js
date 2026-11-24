@@ -414,6 +414,7 @@ function loadDeckData(deck) {
   S.html = {}; S.saved = {};
   for (const s of deck.slides) { S.html[s.id] = s.html; S.saved[s.id] = s.html; }
   S.comments = deck.comments; S.status = deck.status || {};
+  S.claims = deck.claims || {};
   document.title = `${deck.title} — HTML Slides`;
 }
 
@@ -477,12 +478,13 @@ function buildEditor() {
   E.status = h('div', { class: 'stage-status' });
   E.steps = h('div', { class: 'step-strip', hidden: true });
   E.banner = h('div', { class: 'banner', hidden: true });
+  E.claimBar = h('div', { class: 'claim-bar', hidden: true });
   E.modeChip = h('div', { class: 'mode-chip', hidden: true }, 'Note tool: click anywhere on the slide · Esc to exit');
   E.stageWrap = h('main', { class: 'stage-wrap', onmousedown: (e) => {
     if (E.pop?.contains(e.target)) return;
     if (!E.stage.contains(e.target)) { closePop(); stopEdit(); select(null); }
   } },
-    E.stage, E.steps, E.status, E.banner, E.modeChip,
+    E.stage, E.steps, E.status, E.banner, E.claimBar, E.modeChip,
     h('div', { class: 'hint' }, h('span', null, 'Click select · Drag move · Double-click edit text · N note · [ ] animation steps · Esc parent · ⇧ lock axis · Alt no snap')));
   E.inspector = h('aside', { class: 'inspector' });
 
@@ -559,12 +561,41 @@ function highlightThumb() {
   thumbs.get(S.current)?.el.scrollIntoView({ block: 'nearest' });
 }
 
+// ---------- claims: an agent marks the slides it is working on (slides claim … --as NAME). Advisory only: the
+// editor never blocks a save; "Take over" releases the claim (the human always wins).
+const liveClaim = (id) => { const c = S.claims?.[id]; return c && !(Date.parse(c.expires) <= Date.now()) ? c : null; };
+const shortName = (n) => (n.length > 12 ? n.slice(0, 11) + '…' : n);
+function renderClaimBar() {
+  if (!E.claimBar) return;
+  const c = S.current && liveClaim(S.current);
+  E.claimBar.hidden = !c;
+  if (!c) { E.claimBar.replaceChildren(); return; }
+  const mins = Math.max(0, Math.round((Date.now() - Date.parse(c.since)) / 60000));
+  E.claimBar.replaceChildren(
+    h('span', { class: 'claim-dot' }),
+    h('span', null, h('b', null, c.by), ' is editing this slide', c.note ? h('span', { class: 'muted' }, ` — ${c.note}`) : null,
+      h('span', { class: 'muted' }, ` · ${mins < 1 ? 'just now' : mins < 60 ? `${mins} min` : `${Math.floor(mins / 60)} h ${mins % 60} min`}`)),
+    btn('Take over', () => takeOverSlide(S.current), { cls: 'small', title: `Release ${c.by}'s claim. Your edits are saved either way; this tells the agent the slide is yours now.` }));
+}
+async function takeOverSlide(id) {
+  const c = liveClaim(id);
+  try { await api.del(`/api/decks/${D()}/claims/${encodeURIComponent(id)}`); delete S.claims[id]; renderClaimBar(); updateBadges(); toast(c ? `Released ${c.by}'s claim on "${id}"` : 'Released', 'ok'); }
+  catch (e) { toast(e.message, 'error'); }
+}
+async function refreshClaims() {
+  try { S.claims = await api.get(`/api/decks/${D()}/claims`); } catch { return; }
+  updateBadges(); renderClaimBar();
+}
+setInterval(() => { if (S.view === 'editor') { updateBadges(); renderClaimBar(); } }, 60000);
+
 function updateBadges() {
   for (const [id, t] of thumbs) {
+    const cl = liveClaim(id);
     const n = S.comments.filter((c) => c.slide === id && c.status !== 'resolved').length;
     const over = S.status[id]?.overflow?.length;
     t.badges.replaceChildren(...[
       over ? h('span', { class: 'badge warn', title: `Overflows: ${S.status[id].overflow.join(', ')}` }, '!') : null,
+      cl ? h('span', { class: 'badge claim', title: `${cl.by} is editing this slide${cl.note ? ` — ${cl.note}` : ''}` }, `✎ ${shortName(cl.by)}`) : null,
       figsNeed(id).length ? h('span', { class: 'badge fig', title: figsNeed(id).map((f) => `${f.id || f.out}: ${f.status} — ${f.reason}`).join('\n') }, '⟳') : null,
       stepsIn(S.html[id]) ? h('span', { class: 'badge steps', title: `${stepsIn(S.html[id])} click-build steps (animations)` }, `▶ ${stepsIn(S.html[id])}`) : null,
       n ? h('span', { class: 'badge', title: `${n} open note${n > 1 ? 's' : ''}` }, n) : null].filter(Boolean));
@@ -625,9 +656,11 @@ function selectSlide(id) {
   S.current = id;
   S.sel = null;
   S.step = null;
+  S.newClick = null;
   S.hist[id] ??= { stack: [S.html[id]], i: 0 };
   hideBanner();
   highlightThumb();
+  renderClaimBar();
   setCanvasHtml(S.html[id]);
   renderStepStrip();
   history.replaceState(null, '', `#/deck/${D()}/${id}`);
@@ -1304,12 +1337,21 @@ const STRIP_H = 112;
 const buildVals = (root) => [...new Set([...root.querySelectorAll('[data-build]')].map((e) => parseFloat(e.dataset.build)).filter(Number.isFinite))].sort((a, b) => a - b);
 const parseSlide = (html) => { const t = document.createElement('template'); t.innerHTML = html || ''; return t.content; };
 const stepsIn = (html) => new Set([...String(html || '').matchAll(/\sdata-build="([^"]*)"/g)].map((m) => parseFloat(m[1])).filter(Number.isFinite)).size;
-const curSteps = () => (section() ? buildVals(section()).length : 0);
+// A new click made with "+" on the strip has no elements yet: it lives in S.newClick ({id, val}) until something is
+// put on it (then it is real) or the slide is left (then it is dropped).
+function stepVals(root, id = S.current) {
+  const v = buildVals(root), p = S.newClick;
+  if (!p || p.id !== id) return v;
+  if (v.includes(p.val)) { S.newClick = null; return v; }
+  return [...v, p.val].sort((a, b) => a - b);
+}
+const isPendingVal = (v) => S.newClick?.id === S.current && S.newClick.val === v;
+const nextBuildVal = (vals) => Math.floor(Math.max(0, ...vals)) + 1;
+const curSteps = () => (section() ? stepVals(section()).length : 0);
 const effStep = () => { const n = curSteps(); return n ? Math.min(S.step ?? n, n) : null; };
 const noteStep = () => (S.step != null && curSteps() ? Math.min(S.step, curSteps()) : null);
 const stepName = (k) => (k ? `click ${k}` : 'start');
-function stepCss(root, k, { mark = false } = {}) {
-  const vals = buildVals(root);
+function stepCss(root, k, { mark = false, vals = buildVals(root) } = {}) {
   if (k == null || !vals.length) return '';
   k = Math.min(k, vals.length);
   const lim = k ? vals[k - 1] : -Infinity;
@@ -1324,7 +1366,7 @@ function applyStepCss() {
   if (!S.doc?.head) return;
   let st = S.doc.getElementById('step-css');
   if (!st) { st = S.doc.createElement('style'); st.id = 'step-css'; S.doc.head.append(st); }
-  st.textContent = S.step != null && section() ? stepCss(section(), S.step, { mark: true }) : '';
+  st.textContent = S.step != null && section() ? stepCss(section(), S.step, { mark: true, vals: stepVals(section()) }) : '';
   if (S.sel?.isConnected && S.doc.defaultView.getComputedStyle(S.sel).visibility === 'hidden') select(null);
 }
 function setStep(k) {
@@ -1334,36 +1376,58 @@ function setStep(k) {
   applyStepCss(); updateOverlay(); renderMarkers(); renderStepStrip();
 }
 function stampStep(el) {
-  const vals = section() ? buildVals(section()) : [];
+  const vals = section() ? stepVals(section()) : [];
   if (S.step == null || !vals.length || S.step === 0) return;
   const k = Math.min(S.step, vals.length);
   el.dataset.build = String(vals[k - 1]);
   toast(`Added to click ${k}: it appears on that click when presenting`);
 }
-const strip = { id: null, n: -1, cards: [] };
+/** "+" on the strip (or the slide panel): a new, still empty click after the last one, shown right away. */
+function newClickStep() {
+  if (!section()) return;
+  if (S.editing) stopEdit();
+  const real = buildVals(section());
+  if (!(S.newClick?.id === S.current)) S.newClick = { id: S.current, val: nextBuildVal(real) };
+  const k = stepVals(section()).length;
+  setStep(k);
+  toast(`Click ${k} added. Add a text box, image or equation now, or select something and use "Assign to click ${k}".`);
+}
+/** Put an existing element on the click currently shown. */
+function assignToStep(el) {
+  const vals = stepVals(section()), k = effStep();
+  if (!k) return;
+  el.dataset.build = String(vals[k - 1]);
+  commit(); renderInspector(); renderStepStrip(); updateOverlay();
+  toast(`Appears on click ${k} when presenting`);
+}
+const strip = { key: '', cards: [] };
 function renderStepStrip() {
   if (!E.steps) return;
   const html = S.current ? S.html[S.current] : '';
   const root = parseSlide(html);
-  const n = buildVals(root).length;
+  const vals = stepVals(root);
+  const n = vals.length;
   const was = !E.steps.hidden;
   E.steps.hidden = !n;
   if (was !== !!n) fitStage();
-  if (!n) { E.steps.replaceChildren(); strip.n = -1; strip.id = null; return; }
-  if (strip.id !== S.current || strip.n !== n) {
-    strip.id = S.current; strip.n = n;
+  if (!n) { E.steps.replaceChildren(); strip.key = ''; return; }
+  const key = `${S.current}|${n}|${vals.map((v) => (isPendingVal(v) ? 'p' : '')).join('')}`;
+  if (strip.key !== key) {
+    strip.key = key;
     strip.cards = Array.from({ length: n + 1 }, (_, k) => {
-      const f = frame(html, { css: stepCss(root, k) });
+      const f = frame(html, { css: stepCss(root, k, { vals }) });
       const badge = h('span', { class: 'badge', hidden: true });
-      const el = h('button', { class: 'step-card', title: k ? `After click ${k} — notes and new elements go to this step` : 'Before any click', onclick: () => setStep(k) },
-        f, h('span', { class: 'step-label' }, k ? `Click ${k}` : 'Start'), badge);
+      const empty = k && isPendingVal(vals[k - 1]);
+      const el = h('button', { class: `step-card${empty ? ' pending' : ''}`, title: empty ? `New click ${k}, still empty: add elements while it is shown, or select one and "Assign to click ${k}". Dropped if you leave the slide with it empty.` : k ? `After click ${k} — notes and new elements go to this step` : 'Before any click', onclick: () => setStep(k) },
+        f, h('span', { class: 'step-label' }, k ? `Click ${k}${empty ? ' (empty)' : ''}` : 'Start'), badge);
       return { el, iframe: f.firstElementChild, badge };
     });
-    E.steps.replaceChildren(h('div', { class: 'step-title' }, 'Animation', h('span', null, '[ ]')), ...strip.cards.map((c) => c.el));
+    const add = h('button', { class: 'step-card add', title: 'New click step after the last one', onclick: () => newClickStep() }, h('div', { class: 'step-plus' }, '+'), h('span', { class: 'step-label' }, 'New click'));
+    E.steps.replaceChildren(h('div', { class: 'step-title' }, 'Animation', h('span', null, '[ ]')), ...strip.cards.map((c) => c.el), add);
     requestAnimationFrame(() => fitFrames(E.steps));
   } else {
     strip.cards.forEach((c, k) => {
-      const doc = c.iframe.contentDocument, css = stepCss(root, k);
+      const doc = c.iframe.contentDocument, css = stepCss(root, k, { vals });
       if (doc?.body && doc.getElementById('extra-css')) { doc.body.innerHTML = mathHtml(figHtml(html)); doc.getElementById('extra-css').textContent = css; }
       else c.iframe.srcdoc = slideDoc(html, { css });
     });
@@ -1599,16 +1663,23 @@ function elementPanel(el) {
 }
 
 // ---------- click builds: data-build="N" makes the element appear on the Nth click when presenting
+// The options are the slide's click steps in order (labelled as in the step strip), plus a new one after the last.
 function buildField(el) {
-  const cur = el.dataset.build || '';
-  const max = Math.max(0, ...[...section().querySelectorAll('[data-build]')].map((e) => parseFloat(e.dataset.build) || 0));
-  const opts = [['', 'Always visible'], ...Array.from({ length: max + 1 }, (_, k) => [String(k + 1), `Appears on click ${k + 1}`])];
-  if (cur && !opts.some(([v]) => v === cur)) opts.push([cur, `Appears on click ${cur}`]);
-  const sel = h('select', null, opts.map(([v, t]) => h('option', { value: v, selected: v === cur }, t)));
-  sel.addEventListener('change', () => { if (sel.value) el.dataset.build = sel.value; else { delete el.dataset.build; delete el.dataset.buildEffect; } commit(); renderInspector(); });
+  const cur = el.dataset.build || '', curV = parseFloat(cur);
+  const vals = stepVals(section());
+  const opts = [['', 'Always visible'], ...vals.map((v, k) => [String(v), `Appears on click ${k + 1}${isPendingVal(v) ? ' (new)' : ''}`])];
+  if (!S.newClick || S.newClick.id !== S.current) opts.push([String(nextBuildVal(vals)), `Appears on click ${vals.length + 1} (new)`]);
+  const sel = h('select', null, opts.map(([v, t]) => h('option', { value: v, selected: v ? parseFloat(v) === curV : !cur }, t)));
+  sel.addEventListener('change', () => { if (sel.value) el.dataset.build = sel.value; else { delete el.dataset.build; delete el.dataset.buildEffect; } commit(); renderInspector(); renderStepStrip(); });
+  const k = effStep();
+  // on a snapshot (click k ≥ 1) a visible element can be moved onto that click; on Start everything visible has no build
+  const onStep = S.step != null && !!k;
+  const already = onStep && parseFloat(cur) === vals[k - 1];
+  const assign = onStep ? btn(`Assign to click ${k}`, () => assignToStep(el), { cls: 'small', title: `Make this appear on click ${k}, the step shown now` }) : null;
   const eff = h('select', { disabled: !cur }, [['', 'Pop in'], ['fade', 'Fade in'], ['zoom', 'Zoom in (from transform-origin)']].map(([v, t]) => h('option', { value: v, selected: (el.dataset.buildEffect || '') === v }, t)));
   eff.addEventListener('change', () => { if (eff.value) el.dataset.buildEffect = eff.value; else delete el.dataset.buildEffect; commit(); });
-  return h('label', { class: 'field' }, h('span', null, 'Animation (present mode)'), h('div', { class: 'row' }, sel, eff));
+  if (assign) assign.disabled = already;
+  return h('label', { class: 'field' }, h('span', null, 'Animation (present mode)'), h('div', { class: 'row' }, sel, eff), assign ? h('div', { class: 'row' }, assign) : null);
 }
 
 // ---------- interactive embeds: optional live preview (off by default, never saved)
@@ -1702,6 +1773,7 @@ function slidePanel() {
     h('div', { class: 'row wrap' },
       btn('Edit HTML', () => htmlModal(), { cls: 'small', ic: 'code' }),
       btn('Save as layout', () => saveLayoutModal(), { cls: 'small', title: 'Reuse this slide as a template layout' }),
+      !curSteps() ? btn('Click step', () => newClickStep(), { cls: 'small', ic: 'plus', title: 'Start a click animation: new elements you add (or ones you assign) appear on that click when presenting' }) : null,
       btn('History', () => historyModal(id), { cls: 'small', ic: 'history', title: 'Earlier versions of this slide (every save and agent edit is kept); compare and restore' }),
       btn('Duplicate', () => duplicateSlide(id), { cls: 'small' }),
       btn('Delete', () => deleteSlide(id), { cls: 'small danger' })));
@@ -2017,10 +2089,12 @@ async function agentModal() {
   const join = d
     ? `${where}\n\nYou're joining deck "${d}": ${dd}/${d}/ (slides in slides/<id>.html, order in deck.json, theme "${S.deck?.theme || ''}"). ` +
       `Other agents and I may be editing the same deck right now; the editor at ${INFO.url || 'http://127.0.0.1:4173'} live-reloads on every save.\n` +
-      `1. Orient: node bin/slides.mjs outline ${d}  and  node bin/slides.mjs layouts ${d}.\n` +
-      `2. Add slides only with the CLI (never hand-edit deck.json): node bin/slides.mjs add ${d} --layout <name> --title "…" --after <id> — it prints the file to write into.\n` +
-      `3. Only edit the slides you create or that I assign to you. Re-read a slide file right before changing it and make targeted edits, not whole-file rewrites.\n` +
-      `4. Check your slides: node bin/slides.mjs check ${d}  and  node bin/slides.mjs render ${d} <id>, look at the PNG, fix, repeat.\n\n` +
+      `0. Pick a short unique name for yourself (e.g. agent-results) and export SLIDES_AGENT=<name>; it labels your claims.\n` +
+      `1. Orient: node bin/slides.mjs outline ${d}, node bin/slides.mjs claims ${d} (who is on which slide) and node bin/slides.mjs layouts ${d}.\n` +
+      `2. Add slides only with the CLI (never hand-edit deck.json): node bin/slides.mjs add ${d} --layout <name> --title "…" --after <id> --as <name> — it prints the file to write into and claims the slide for you.\n` +
+      `3. Only edit the slides you create or that I assign to you; claim assigned ones first: node bin/slides.mjs claim ${d} <id> --as <name> --note "what you're doing". Don't touch slides someone else has claimed (leave a note with slides comment instead). Re-read a slide file right before changing it and make targeted edits, not whole-file rewrites.\n` +
+      `4. Check your slides: node bin/slides.mjs check ${d}  and  node bin/slides.mjs render ${d} <id>, look at the PNG, fix, repeat.\n` +
+      `5. When you're done: node bin/slides.mjs release ${d} --all --as <name>.\n\n` +
       `Task: <what to add — e.g. 3 slides on X after slide <id>>`
     : `${where}\n\nDecks live in ${dd}/<deck>/. List them with node bin/slides.mjs decks. Other agents may be editing at the same time; follow the multi-agent rules in AGENTS.md.\n\nTask: <what to do>`;
   const prompts = [
@@ -2073,7 +2147,8 @@ function applyExternal(id, html) {
 
 async function syncFromDisk(files) {
   fetchFiguresSoon();
-  if (files.every((f) => f.startsWith('assets/'))) return;
+  if (files.includes('claims.json')) await refreshClaims();
+  if (files.every((f) => f.startsWith('assets/') || f === 'claims.json')) return;
   let deck;
   try { deck = await api.get(`/api/decks/${D()}`); } catch { return; }
   if (deck.name !== D()) return;
@@ -2082,6 +2157,7 @@ async function syncFromDisk(files) {
   S.deck.theme = deck.theme;
   const commentsChanged = JSON.stringify(deck.comments) !== JSON.stringify(S.comments);
   S.comments = deck.comments;
+  if (deck.claims) S.claims = deck.claims;
 
   let structural = false;
   const changedOthers = [];

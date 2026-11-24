@@ -24,6 +24,8 @@ On a remote machine, forward the port with `ssh -L 4173:127.0.0.1:4173 host`, or
    - add text boxes, images (or drop or paste images onto the slide) and LaTeX equations (rendered with KaTeX, offline)
    - use the inspector for font size, colour, alignment and classes, plus speaker notes, raw HTML and theme CSS
    - reorder slides by dragging thumbnails; ⌘Z / ⌘⇧Z undo and redo (agent edits are in the undo history too)
+   - click animations: a slide with click builds gets a strip of snapshots (Start, Click 1, …; `[` `]`); **+** adds a
+     new click, and elements you add on a snapshot (or **Assign to click K**) appear on that click
 3. **You leave notes** pinned to elements ("make this punchier"). Then tell the agent
    *"address the open comments in deck X"*. It runs `slides comments`, edits the files and
    resolves each note with a reply, and you watch the slides update live. A resolved note has a
@@ -35,7 +37,10 @@ On a remote machine, forward the port with `ssh -L 4173:127.0.0.1:4173 host`, or
    window, with a **Rehearse** mode that times every slide against its target (`slides target`, `slides rehearsals`).
    **Export** downloads one self-contained `.html` file or a **PDF** (one 16:9 page per slide; optionally a page per
    click step and speaker-notes pages; CLI: `slides pdf`).
-5. **Figures from scripts.** An image can name the script that makes it (`data-source="scripts/plot.py"`). The editor
+5. **Several agents at once.** The **Agent** button has a "Join this deck" prompt. Each agent claims the slides it works
+   on (`slides claim`, `slides add --as NAME`); the editor shows who is on which slide, and **Take over** gives a slide
+   back to you.
+6. **Figures from scripts.** An image can name the script that makes it (`data-source="scripts/plot.py"`). The editor
    marks it **stale** when the script or its data is newer than the image and re-runs it from the inspector;
    agents use `slides figures <deck> --refresh`.
 
@@ -47,6 +52,7 @@ On a remote machine, forward the port with `ssh -L 4173:127.0.0.1:4173 host`, or
 | `decks/<deck>/deck.json` | title, theme, slide order |
 | `decks/<deck>/theme.css` | the deck's own theme (copied from a template, edit freely) |
 | `decks/<deck>/comments.json` | human ↔ agent notes |
+| `decks/<deck>/claims.json` | which agent is working on which slide (`slides claims`) |
 | `decks/<deck>/.history/<id>/` | earlier versions of each slide (last 50; not tracked by git) |
 | `templates/layouts/` | slide layouts (title, agenda, bullets, two-col, cards, image-right, image-full, stats, quote, code, closing, blank). Add your own with **Save as layout** in the editor |
 | `templates/themes/` | base themes: `clean`, `midnight`, `paper`, `mprime` (fonts and other theme assets live in `templates/themes/assets/` and are copied into a deck when the theme is applied) |
