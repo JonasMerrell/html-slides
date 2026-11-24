@@ -285,3 +285,8 @@ input[type=color] { width: 30px; height: 30px; padding: 2px; border: 1px solid v
 .math-preview .katex-display { margin: 0; }
 .math-error { color: var(--danger); font-size: 13px; white-space: pre-wrap; }
 .tex-src { display: block; font: 12px/1.4 ui-monospace, Menlo, monospace; padding: 6px 8px; border-radius: 6px; background: var(--code-bg); white-space: pre-wrap; word-break: break-all; }
+.badge.fig { background: #e8710a; }
+.marker.fig-badge { transform: translate(6px, 6px) scale(calc(1 / var(--scale))); transform-origin: 0 0; border-radius: 4px; background: #e8710a; color: #fff; white-space: nowrap; }
+.marker.fig-badge.no-source, .marker.fig-badge.error { background: var(--warn); color: #1b1b1b; }
+.fig-status { font-weight: 700; color: #e8710a; }
+.fig-status.ok { color: #2e9d5b; }

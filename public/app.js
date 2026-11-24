@@ -93,6 +93,7 @@ const S = {
   comments: [], status: {}, themes: [], layouts: [],
   current: null, doc: null, sel: null, editing: null,
   scale: 0.5, themeV: Date.now(), showAllComments: false,
+  figs: [], figV: {}, figSeen: {}, // script-made figures: status from the server; image path → mtime for cache-busting
 };
 const E = {}; // editor DOM refs
 const D = () => S.deck?.name;
@@ -106,7 +107,118 @@ function slideDoc(html, { deck = D(), themeHref, editing = false, css = '' } = {
   return `<!doctype html><html><head><meta charset="utf-8"><base href="${base}">` +
     `<link rel="stylesheet" href="/vendor/katex/katex.min.css"><link rel="stylesheet" href="/core/slides.css"><link rel="stylesheet" id="theme-css" href="${theme}">` +
     `<style>html,body{margin:0;width:1920px;height:1080px;overflow:hidden;background:transparent}${editing ? EDIT_CSS : ''}</style><style id="extra-css">${css}</style>` +
-    `</head><body>${mathHtml(html)}</body></html>`;
+    `</head><body>${mathHtml(figHtml(html))}</body></html>`;
+}
+
+// ============================================================ figures made by scripts
+// <img data-source="scripts/plot.py" src="assets/figs/plot.png"> (or on a <figure> around the img). The server reports
+// each one's status (ok / stale / missing / no-source / error) and re-runs the script; the command is always read
+// from the slide file on disk. When an image changes on disk, the editor's view of it gets ?fv=<mtime> so the browser
+// shows the new file; serialize() puts the plain src back, so this never reaches the saved HTML.
+const figKey = (src) => String(src || '').replace(/[?#].*$/, '');
+function figHtml(html) {
+  if (!html || !Object.keys(S.figV || {}).length) return html;
+  return html.replace(/(<img\b[^>]*?\s)src="([^"]*)"/gi, (m, pre, src) => {
+    const v = S.figV[figKey(src)];
+    return v ? `${pre}src="${figKey(src)}?fv=${v}" data-fv-src="${src}"` : m;
+  });
+}
+const figsNeed = (id) => (S.figs || []).filter((f) => f.slide === id && f.status !== 'ok');
+let figTimer = null, figSoon = null;
+function fetchFiguresSoon() { clearTimeout(figSoon); figSoon = setTimeout(fetchFigures, 300); }
+async function fetchFigures() {
+  clearTimeout(figTimer);
+  const deck = D();
+  if (!deck || S.view !== 'editor') return;
+  let list;
+  try { list = await api.get(`/api/decks/${deck}/figures`); } catch { list = null; }
+  if (D() !== deck) return;
+  if (list) {
+    const touched = new Set();
+    for (const f of list) {
+      const k = figKey(f.out);
+      if (f.outMtime == null) continue;
+      if (k in S.figSeen && S.figSeen[k] !== f.outMtime) { S.figV[k] = Math.round(f.outMtime); touched.add(f.slide); }
+      S.figSeen[k] = f.outMtime;
+    }
+    const was = JSON.stringify((S.figs || []).map((f) => [f.slide, f.index, f.status, f.reason]));
+    S.figs = list;
+    for (const id of touched) {
+      if (id === S.current && S.doc && section()) {
+        for (const img of section().querySelectorAll('img')) {
+          const orig = img.dataset.fvSrc || img.getAttribute('src'), v = S.figV[figKey(orig)];
+          if (v) { img.dataset.fvSrc = orig; img.setAttribute('src', `${figKey(orig)}?fv=${v}`); }
+        }
+        updateOverlay();
+      }
+      updateThumb(id);
+    }
+    if (touched.size || was !== JSON.stringify(list.map((f) => [f.slide, f.index, f.status, f.reason]))) {
+      updateBadges(); renderMarkers();
+      if (S.sel?.closest?.('[data-source]') && !E.inspector.contains(document.activeElement)) renderInspector();
+    }
+  }
+  // scripts and data files live outside what the server's change feed watches: check again while figures exist
+  if (S.figs.length) figTimer = setTimeout(fetchFigures, document.hidden ? 15000 : 4000);
+}
+const figHost = (el) => el?.closest?.('img[data-source], figure[data-source]') || null;
+function figEntryFor(host) {
+  if (!host || !section()) return null;
+  const all = [...section().querySelectorAll('img[data-source], figure[data-source]')], index = all.indexOf(host);
+  return (S.figs || []).find((f) => f.slide === S.current && (host.dataset.id ? f.id === host.dataset.id : f.index === index)) || null;
+}
+function figBadges() {
+  if (!section()) return [];
+  return [...section().querySelectorAll('img[data-source], figure[data-source]')].map((host) => {
+    const f = figEntryFor(host);
+    if (!f || f.status === 'ok') return null;
+    const r = host.getBoundingClientRect();
+    return h('div', { class: `marker fig-badge ${f.status}`, title: `${f.status}: ${f.reason}\nSelect it to re-run ${f.source}`, style: { left: `${r.left}px`, top: `${r.top}px` },
+      onmousedown: (e) => { e.stopPropagation(); e.preventDefault(); select(host); } }, f.status === 'stale' ? '⟳ stale' : f.status === 'missing' ? '⟳ not made' : `⚠ ${f.status}`);
+  }).filter(Boolean);
+}
+async function rerunFigure(host, b) {
+  const f = figEntryFor(host);
+  b.disabled = true; const label = b.lastChild.textContent; b.lastChild.textContent = 'Running…';
+  try {
+    await flushSaves();
+    const all = [...section().querySelectorAll('img[data-source], figure[data-source]')];
+    const r = await fetch(`/api/decks/${encodeURIComponent(D())}/figures/refresh`, { method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ slide: S.current, id: host.dataset.id || null, index: all.indexOf(host) }) });
+    const res = await r.json().catch(() => ({}));
+    if (r.ok && res.ok) toast(`Figure updated (${(res.ms / 1000).toFixed(1)} s)`, 'ok');
+    else modal({ title: 'The figure script failed', wide: true, body: h('div', null,
+      h('p', null, res.error || `HTTP ${r.status}`), h('p', { class: 'muted' }, f ? `${f.source} → ${f.out}` : ''),
+      (res.stderr || res.stdout) ? h('pre', { class: 'code-area', style: { maxHeight: '50vh', overflow: 'auto', whiteSpace: 'pre-wrap' } }, (res.stderr || res.stdout).trim()) : null) });
+  } catch (e) { toast(e.message, 'error'); }
+  b.disabled = false; b.lastChild.textContent = label;
+  await fetchFigures();
+}
+function figureField(el) {
+  const host = figHost(el) || el;
+  const f = figHost(el) ? figEntryFor(host) : null;
+  const srcIn = h('input', { type: 'text', value: host.dataset.source || '', placeholder: 'scripts/plot.py (writes this image)' });
+  srcIn.addEventListener('change', () => {
+    const v = srcIn.value.trim();
+    if (v) host.dataset.source = v; else { delete host.dataset.source; delete host.dataset.cmd; delete host.dataset.inputs; }
+    if (v && !host.dataset.id) host.dataset.id = uniqueFigId(host);
+    commit(); fetchFiguresSoon(); renderInspector();
+  });
+  const run = btn('Re-run', () => rerunFigure(host, run), { cls: 'small', ic: 'reset', title: 'Run the script again (it writes this image)' });
+  return h('div', { class: 'field' },
+    h('span', null, 'Made by script'), srcIn,
+    host.dataset.source ? h('div', { class: 'muted', style: { fontSize: '12px', lineHeight: 1.45 } },
+      f ? h('span', { class: `fig-status ${f.status}` }, f.status === 'ok' ? '✓ up to date' : f.status) : 'checking…',
+      f?.reason ? ` · ${f.reason}` : '',
+      host.dataset.cmd ? h('div', null, 'Command: ', h('code', null, host.dataset.cmd)) : null,
+      host.dataset.inputs ? h('div', null, 'Inputs: ', h('code', null, host.dataset.inputs)) : null) : null,
+    host.dataset.source ? h('div', { class: 'row' }, run) : null);
+}
+function uniqueFigId(host) {
+  const base = (figKey(host.matches('img') ? host.getAttribute('src') : host.querySelector('img')?.getAttribute('src')).split('/').pop() || 'figure').replace(/\.[^.]+$/, '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'figure';
+  let id = base, n = 2;
+  while (section().querySelector(`[data-id="${CSS.escape(id)}"]`)) id = `${base}-${n++}`;
+  return id;
 }
 
 // ============================================================ equations
@@ -293,6 +405,7 @@ async function openDeck(name, slideId) {
   loadDeckData(deck);
   buildEditor();
   selectSlide(slideId && S.html[slideId] != null ? slideId : S.order[0]);
+  S.figs = []; S.figV = {}; S.figSeen = {}; fetchFigures();
 }
 
 function loadDeckData(deck) {
@@ -343,7 +456,7 @@ function buildEditor() {
     btn('CSS', () => themeCssModal(), { ic: 'palette', title: "Edit this deck's theme.css" }),
     btn('Agent', () => agentModal(), { ic: 'bot', title: 'Prompts for working with an agent' }),
     h('div', { class: 'sep' }),
-    btn('Export', () => { flushSaves().then(() => { location.href = `/export/${D()}`; }); }, { ic: 'download', title: 'Download a single self-contained HTML file' }),
+    btn('Export', () => exportModal(), { ic: 'download', title: 'Download the deck as one self-contained HTML file or as a PDF' }),
     btn('Present', () => { flushSaves().then(() => window.open(`/present/${D()}#${S.order.indexOf(S.current) + 1}`, '_blank')); }, { cls: 'primary', ic: 'play', title: 'Present from this slide. There, P opens the presenter view (notes, next slide, timer, rehearsal).' }),
     uiThemeBtn());
 
@@ -378,7 +491,7 @@ function buildEditor() {
   E.iframe.addEventListener('load', () => {
     S.doc = E.iframe.contentDocument;
     wireCanvas(S.doc);
-    if (S.current) S.doc.body.innerHTML = S.html[S.current];
+    if (S.current) S.doc.body.innerHTML = figHtml(S.html[S.current]);
     ensureSection();
     afterCanvasRender();
     renderInspector();
@@ -452,6 +565,7 @@ function updateBadges() {
     const over = S.status[id]?.overflow?.length;
     t.badges.replaceChildren(...[
       over ? h('span', { class: 'badge warn', title: `Overflows: ${S.status[id].overflow.join(', ')}` }, '!') : null,
+      figsNeed(id).length ? h('span', { class: 'badge fig', title: figsNeed(id).map((f) => `${f.id || f.out}: ${f.status} — ${f.reason}`).join('\n') }, '⟳') : null,
       stepsIn(S.html[id]) ? h('span', { class: 'badge steps', title: `${stepsIn(S.html[id])} click-build steps (animations)` }, `▶ ${stepsIn(S.html[id])}`) : null,
       n ? h('span', { class: 'badge', title: `${n} open note${n > 1 ? 's' : ''}` }, n) : null].filter(Boolean));
   }
@@ -466,7 +580,7 @@ function updateThumb(id) {
     t.html = S.html[id];
     if (id === S.current) renderStepStrip();
     const body = t.iframe.contentDocument?.body;
-    if (body) { body.innerHTML = mathHtml(S.html[id]); measureThumb(id, t.iframe); } else t.iframe.srcdoc = slideDoc(S.html[id]);
+    if (body) { body.innerHTML = mathHtml(figHtml(S.html[id])); measureThumb(id, t.iframe); } else t.iframe.srcdoc = slideDoc(S.html[id]);
   }, 250);
 }
 function flashThumb(id) {
@@ -558,7 +672,7 @@ function ensureSection() {
 function setCanvasHtml(html, keepPath = null) {
   if (!S.doc) return; // first load handled by iframe onload
   if (S.editing) S.editing = null;
-  S.doc.body.innerHTML = html;
+  S.doc.body.innerHTML = figHtml(html);
   ensureSection();
   S.sel = keepPath ? byPath(keepPath) : null;
   afterCanvasRender();
@@ -1049,6 +1163,7 @@ function serialize() {
   const sec = section().cloneNode(true);
   sec.querySelectorAll('iframe.embed-frame').forEach((f) => f.remove()); // live preview is never saved
   sec.querySelectorAll('figure.embed.live').forEach((f) => f.classList.remove('live'));
+  sec.querySelectorAll('img[data-fv-src]').forEach((i) => { i.setAttribute('src', i.dataset.fvSrc); i.removeAttribute('data-fv-src'); }); // cache-busting is view-only
   for (const n of [sec, ...sec.querySelectorAll('[contenteditable], [spellcheck]')]) { n.removeAttribute('contenteditable'); n.removeAttribute('spellcheck'); }
   for (const n of [sec, ...sec.querySelectorAll('[style]')]) if (!n.getAttribute('style')?.trim()) n.removeAttribute('style');
   return sec.outerHTML;
@@ -1249,7 +1364,7 @@ function renderStepStrip() {
   } else {
     strip.cards.forEach((c, k) => {
       const doc = c.iframe.contentDocument, css = stepCss(root, k);
-      if (doc?.body && doc.getElementById('extra-css')) { doc.body.innerHTML = mathHtml(html); doc.getElementById('extra-css').textContent = css; }
+      if (doc?.body && doc.getElementById('extra-css')) { doc.body.innerHTML = mathHtml(figHtml(html)); doc.getElementById('extra-css').textContent = css; }
       else c.iframe.srcdoc = slideDoc(html, { css });
     });
   }
@@ -1287,6 +1402,7 @@ function renderMarkers() {
       onmousedown: (e) => { e.stopPropagation(); e.preventDefault(); openViewNote(c); },
     }, c.id);
   });
+  marks.push(...figBadges());
   if (S.pending) marks.push(h('div', { class: 'marker pin active', style: { left: `${S.pending.x}px`, top: `${S.pending.y}px` } }, '+'));
   E.markers.replaceChildren(...marks.filter(Boolean));
 }
@@ -1472,6 +1588,7 @@ function elementPanel(el) {
       h('label', { class: 'field' }, h('span', null, 'Move Y'), ty)),
     isImg ? h('div', { class: 'row' }, btn('Replace image…', () => replaceIn.click(), { ic: 'image' }), replaceIn) : null,
     isImg ? fit : null,
+    isImg || (el.matches('figure') && !isEmbed) ? figureField(el) : null,
     h('label', { class: 'field' }, h('span', null, 'Classes'), classIn),
     buildField(el),
     h('div', { class: 'row wrap' },
@@ -1796,6 +1913,35 @@ function modal({ title, body, actions = [], wide = false }) {
   return { close, el: back };
 }
 
+function exportModal() {
+  const steps = h('input', { type: 'checkbox' }), notes = h('input', { type: 'checkbox' });
+  const status = h('div', { class: 'muted', style: { fontSize: '12px', minHeight: '16px' } });
+  const html = btn('HTML file', () => { m.close(); flushSaves().then(() => { location.href = `/export/${D()}`; }); }, { cls: 'primary', ic: 'download' });
+  const pdf = btn('PDF', async () => {
+    pdf.disabled = true; status.textContent = 'Printing in headless Chrome…';
+    try {
+      await flushSaves();
+      const q = new URLSearchParams({ ...(steps.checked ? { steps: 1 } : {}), ...(notes.checked ? { notes: 1 } : {}) });
+      const r = await fetch(`/pdf/${encodeURIComponent(D())}?${q}`);
+      if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || r.statusText);
+      const url = URL.createObjectURL(await r.blob());
+      const a = h('a', { href: url, download: `${D()}.pdf` }); document.body.append(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 60000);
+      m.close(); toast('PDF downloaded');
+    } catch (e) { status.textContent = `PDF failed: ${e.message}`; pdf.disabled = false; }
+  }, { ic: 'download' });
+  const m = modal({
+    title: 'Export',
+    body: h('div', { style: { display: 'flex', flexDirection: 'column', gap: '10px', fontSize: '13px', lineHeight: 1.45 } },
+      h('div', null, h('b', null, 'HTML file: '), 'one self-contained file that presents offline, with click builds, embeds and the presenter view.'),
+      h('div', null, h('b', null, 'PDF: '), 'one 16:9 page per slide, fully built; embeds show their posters.'),
+      h('label', { style: { display: 'flex', gap: '6px', alignItems: 'center' } }, steps, 'PDF: a page for every click step of animated slides'),
+      h('label', { style: { display: 'flex', gap: '6px', alignItems: 'center' } }, notes, 'PDF: a speaker-notes page after each slide'),
+      status),
+    actions: [pdf, html],
+  });
+}
+
 function codeArea(value) {
   const ta = h('textarea', { class: 'code-area', spellcheck: 'false' });
   ta.value = value;
@@ -1926,6 +2072,7 @@ function applyExternal(id, html) {
 }
 
 async function syncFromDisk(files) {
+  fetchFiguresSoon();
   if (files.every((f) => f.startsWith('assets/'))) return;
   let deck;
   try { deck = await api.get(`/api/decks/${D()}`); } catch { return; }

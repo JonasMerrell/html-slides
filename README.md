@@ -33,7 +33,11 @@ On a remote machine, forward the port with `ssh -L 4173:127.0.0.1:4173 host`, or
    `N` speaker notes; timeline items link to their chapter, double-click the slide number to jump to a slide).
    **P** opens a presenter view (current and next slide, notes, timer, clock) that stays in sync with the audience
    window, with a **Rehearse** mode that times every slide against its target (`slides target`, `slides rehearsals`).
-   **Export** downloads one self-contained `.html` file (print it to PDF if needed).
+   **Export** downloads one self-contained `.html` file or a **PDF** (one 16:9 page per slide; optionally a page per
+   click step and speaker-notes pages; CLI: `slides pdf`).
+5. **Figures from scripts.** An image can name the script that makes it (`data-source="scripts/plot.py"`). The editor
+   marks it **stale** when the script or its data is newer than the image and re-runs it from the inspector;
+   agents use `slides figures <deck> --refresh`.
 
 ## Layout
 

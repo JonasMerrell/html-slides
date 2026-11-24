@@ -7,6 +7,7 @@ import * as store from '../lib/store.mjs';
 import { buildPresentation } from '../lib/build.mjs';
 import { embedIssues, EMBED_TEMPLATE } from '../lib/embed.mjs';
 import { findMath, mathIssues, renderMathIn } from '../lib/math.mjs';
+import { deckFigures, findFigures, figureStatus, runFigure } from '../lib/figures.mjs';
 
 const HELP = `slides — work with HTML slide decks (files live in ${path.relative(process.cwd(), store.DECKS_DIR) || '.'})
 
@@ -56,6 +57,11 @@ Equations (LaTeX rendered with KaTeX into the slide; see AGENTS.md, Equations)
   slides math <deck> [slide...]                  render <span class="math" data-tex="…"> and <div class="math display" …>
                                                  after editing slide files directly (editor and CLI saves do it)
 
+Figures made by scripts (<img data-source="scripts/plot.py" src="assets/figs/plot.png">; see AGENTS.md)
+  slides figures <deck>                          each script-made figure: ok, stale (script or data newer), missing
+  slides figures <deck> --refresh [slide|data-id...] [--all] [--timeout 120]
+                                                 re-run the scripts of stale/missing figures (--all: every one)
+
 Quality
   slides check <deck>                            lint + real-browser overflow check (needs Chrome)
   slides render <deck> [slide...] [--out DIR] [--sheet] [--cols N] [--step K | --steps]
@@ -63,6 +69,9 @@ Quality
                                                  --step K shows click builds after K clicks (0 = none yet),
                                                  --steps renders every click step of slides that have builds
   slides export <deck> [--out FILE]              single self-contained HTML (assets inlined)
+  slides pdf <deck> [slide...] [--out FILE] [--steps] [--notes]
+                                                 print to PDF (one 16:9 page per slide, fully built; --steps adds
+                                                 a page per click step, --notes a notes page after each slide)
   slides serve [--port 4173] [--host H]          start the web editor
 `;
 
@@ -320,6 +329,10 @@ async function main() {
           if (!fs.existsSync(path.join(store.deckDir(d), decodeURIComponent(m[1])))) issues.push([id, `missing asset ${m[1]}`]);
         }
         for (const [level, msg] of embedIssues(d, html)) issues.push([id, msg, level]);
+        for (const f of findFigures(html)) {
+          const st = figureStatus(d, f);
+          if (st.status !== 'ok') issues.push([id, `figure ${f.id || f.out}: ${st.status} — ${st.reason}${st.status === 'stale' || st.status === 'missing' ? ` (slides figures ${d} --refresh)` : ''}`, 'warn']);
+        }
         for (const m of mathIssues(html)) issues.push([id, m.msg.replace('<deck>', d), m.level === 'warn' ? 'warn' : undefined]);
         if (/<script\b/i.test(html)) issues.push([id, `<script> placed directly in a slide never runs in the editor and runs on every slide at once in present mode; move interactive code into an embed: "slides embed ${d} <name>" (see AGENTS.md, Interactive embeds)`, 'warn']);
       }
@@ -343,6 +356,31 @@ async function main() {
       }
       if (open) console.log(`  (${open} open comment${open > 1 ? 's' : ''} — run "slides comments ${d}")`);
       if (errs.some(([id]) => id !== '-')) process.exitCode = 2;
+      return;
+    }
+
+    case 'figures': {
+      const d = need(rest[0], 'deck name');
+      const list = deckFigures(d);
+      if (!opt.refresh) {
+        if (!list.length) { console.log(`${d}: no figures with data-source (see AGENTS.md, Figures made by scripts)`); return; }
+        for (const f of list) console.log(`${f.status.padEnd(9)} ${f.slide.padEnd(18)} ${(f.id || `#${f.index}`).padEnd(14)} ${f.source} → ${f.out}${f.reason ? `  (${f.reason})` : ''}`);
+        const n = list.filter((f) => f.status !== 'ok').length;
+        if (n) console.log(`\n${n} need attention — "slides figures ${d} --refresh" re-runs stale and missing ones`);
+        return;
+      }
+      const targets = [...rest.slice(1), ...(typeof opt.refresh === 'string' ? [opt.refresh] : [])];
+      const pick = list.filter((f) => (targets.length ? targets.includes(f.slide) || targets.includes(f.id) : true) && (opt.all || targets.length ? f.status !== 'error' : f.status === 'stale' || f.status === 'missing'));
+      if (!pick.length) { console.log(targets.length ? `No figures match ${targets.join(', ')}` : '✓ every figure is up to date (use --all to re-run anyway)'); return; }
+      const timeout = (Number(opt.timeout) || 120) * 1000;
+      let failed = 0;
+      for (const f of pick) {
+        process.stdout.write(`running ${f.source} → ${f.out} … `);
+        const r = await runFigure(d, f, { timeout });
+        if (r.ok) console.log(`ok (${(r.ms / 1000).toFixed(1)} s)`);
+        else { failed++; console.log(`FAILED: ${r.error}`); if (r.stderr.trim()) console.log(r.stderr.trim().split('\n').map((l) => `    ${l}`).join('\n')); }
+      }
+      if (failed) process.exitCode = 2;
       return;
     }
 
@@ -414,6 +452,20 @@ async function main() {
       console.log(`Wrote ${rel(r.out)} (${r.width}×${r.height}${r.slide ? `, as shown on slide ${r.slide}` : ', page on its own'})`);
       for (const e of r.errors) console.log(`  console error: ${e}`);
       if (r.errors.length) process.exitCode = 2;
+      return;
+    }
+
+    case 'pdf': {
+      const d = need(rest[0], 'deck name');
+      let ids = rest.length > 1 ? rest.slice(1) : store.readMeta(d).slides;
+      if (typeof opt.steps === 'string') { ids = rest.length > 1 ? [...ids, opt.steps] : [opt.steps]; opt.steps = true; }
+      if (typeof opt.notes === 'string') { ids = rest.length > 1 ? [...ids, opt.notes] : [opt.notes]; opt.notes = true; }
+      for (const id of ids) store.readSlide(d, id); // unknown slide → clear error
+      if (opt.steps) ids = ids.flatMap((id) => { const n = store.buildStepsOf(store.readSlide(d, id)).length; return n ? Array.from({ length: n + 1 }, (_, k) => ({ id, step: k })) : [id]; });
+      const out = typeof opt.out === 'string' ? opt.out : `${d}.pdf`;
+      const { renderPdf } = await import('../lib/chrome.mjs');
+      const buf = await renderPdf(d, ids, out, { notes: !!opt.notes });
+      console.log(`Wrote ${out} (${ids.length + (opt.notes ? new Set(ids.map((x) => x.id ?? x)).size : 0)} pages, ${(buf.length / 1024).toFixed(0)} KB)`);
       return;
     }
 

@@ -182,6 +182,27 @@ when the slide becomes active. srcdoc rather than a blob URL because it needs no
 has no `file://`/opaque-origin blob quirks, and keeps the text exact: only `&` and `<` are escaped, which keeps
 multi-MB data cheap. Expect the export to grow by roughly the size of each embed folder (a three.js embed with its data slice is typically ~1 MB).
 
+## Figures made by scripts (`data-source`)
+
+**When you make a figure with a script (matplotlib, R, gnuplot, …), declare it** so it can be re-made when the data changes:
+
+```html
+<img data-id="latency" src="assets/figs/latency.png" data-source="scripts/plot_latency.py" data-inputs="data/latency.csv">
+```
+
+- `data-source`: the script, relative to the deck folder (then the repo root), or absolute. Keep scripts in
+  `decks/<deck>/scripts/` and data in `decks/<deck>/data/`. The attributes can also go on a `<figure>` around the `<img>`.
+- The script is run in its own folder with the **output path as its last argument** (also `$FIG_OUT`); it must write
+  the image at the `<img src>` (inside the deck). Default runner by extension: `.py` python3 (`MPLBACKEND=Agg`),
+  `.R` Rscript, `.sh` bash, `.js`/`.mjs` node, `.jl` julia. For anything else add `data-cmd="gnuplot -e 'o={out}' {source}"`
+  (`{source}`, `{out}`, `{deck}`, `{inputs}` are replaced, shell-quoted).
+- `data-inputs` (optional): space-separated data files. The figure is **stale** when the script or an input is newer
+  than the image.
+- `slides figures <deck>` lists them (ok / stale / missing / no-source); `slides figures <deck> --refresh [slide|data-id…]`
+  re-runs stale and missing ones (`--all` re-runs every one) and prints the script's errors. `slides check` warns about them.
+- In the editor such a figure gets a **⟳ stale** badge, and the inspector's "Made by script" field has **Re-run**.
+  The editor only runs commands written in the slide files, never one sent from the browser.
+
 ## Several agents at once
 
 Several agents (and the human) can work on one deck at the same time. Every write is atomic, and the editor shows
@@ -240,7 +261,9 @@ position. Both windows stay in sync either way (also from `file://` exports). Em
    - Make the change in the slide file(s).
    - `slides resolve <deck> <comment-id> --reply "Shortened to 4 bullets"`.
    - To ask the human something: `slides comment <deck> <slide> "Which chart do you prefer?"`.
-5. **Export** when asked: `slides export <deck> --out deck.html` (single file, assets and embeds inlined, works offline).
+5. **Export** when asked: `slides export <deck> --out deck.html` (single file, assets and embeds inlined, works offline),
+   or `slides pdf <deck> [--out deck.pdf] [--steps] [--notes]` (one 16:9 page per slide, fully built; `--steps` adds a
+   page per click step, `--notes` a speaker-notes page after each slide; embeds print as their posters).
    Present mode, with speaker notes on `N` and the presenter view on `P`: open `/present/<deck>` in the editor.
 
 ## Example slide

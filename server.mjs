@@ -8,6 +8,7 @@ import os from 'node:os';
 import * as store from './lib/store.mjs';
 import { buildPresentation } from './lib/build.mjs';
 import { buildEmbedDoc } from './lib/embed.mjs';
+import { deckFigures, figureOn, runFigure, figureStatus } from './lib/figures.mjs';
 
 const args = process.argv.slice(2);
 const argVal = (k, d) => { const i = args.indexOf(k); return i >= 0 ? args[i + 1] : d; };
@@ -228,6 +229,33 @@ route('GET', '/export/:d', (req, res, p) => {
   const html = buildPresentation(p.d, { inline: true });
   res.writeHead(200, { 'content-type': MIME['.html'], 'content-disposition': `attachment; filename="${p.d}.html"` });
   res.end(html);
+});
+
+// figures made by scripts (data-source): status, and re-running one. The command is read from the slide file on
+// disk; the request only says which figure.
+route('GET', '/api/decks/:d/figures', (req, res, p) => json(res, deckFigures(p.d)));
+const figRuns = new Map(); // deck → promise chain: one script at a time per deck
+route('POST', '/api/decks/:d/figures/refresh', async (req, res, p) => {
+  const b = await readJson(req);
+  const f = figureOn(p.d, String(b.slide || ''), { id: b.id ? String(b.id) : null, index: b.index });
+  const job = (figRuns.get(p.d) || Promise.resolve()).then(() => runFigure(p.d, f));
+  figRuns.set(p.d, job.catch(() => {}));
+  const r = await job;
+  json(res, { ...r, figure: { slide: b.slide, ...figureStatus(p.d, f) } }, r.ok ? 200 : 422);
+});
+
+// PDF of the whole deck, fully built (?steps=1: a page per click step, ?notes=1: notes pages)
+let pdfBusy = Promise.resolve();
+route('GET', '/pdf/:d', async (req, res, p, url) => {
+  const meta = store.readMeta(p.d);
+  const steps = url.searchParams.get('steps') === '1', notes = url.searchParams.get('notes') === '1';
+  const items = steps ? meta.slides.flatMap((id) => { const n = store.buildStepsOf(store.readSlide(p.d, id)).length; return n ? Array.from({ length: n + 1 }, (_, k) => ({ id, step: k })) : [id]; }) : meta.slides;
+  const { renderPdf } = await import('./lib/chrome.mjs');
+  const job = pdfBusy.then(() => renderPdf(p.d, items, null, { notes })); // one Chrome at a time
+  pdfBusy = job.catch(() => {});
+  const buf = await job;
+  res.writeHead(200, { 'content-type': MIME['.pdf'], 'content-length': buf.length, 'cache-control': 'no-store', 'content-disposition': `attachment; filename="${p.d}.pdf"` });
+  res.end(buf);
 });
 
 const server = http.createServer(async (req, res) => {
