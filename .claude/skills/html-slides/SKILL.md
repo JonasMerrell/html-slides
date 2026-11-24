@@ -18,6 +18,11 @@ Read `AGENTS.md` at the repo root first. It is the full contract. In short:
    `node bin/slides.mjs resolve <deck> <id> --reply "…"` for each.
 5. Interactive content (sliders, live charts, three.js) goes in an embed, never a `<script>` in a slide:
    `node bin/slides.mjs embed <deck> <name>`, then `poster`. See "Interactive embeds" in AGENTS.md.
-6. Keep the human's manual edits (inline `translate`/size styles, `.free` elements) unless asked to change them.
+6. Several agents on one deck: `slides claim <deck> <slide…> --as <name>` before editing, `slides release` when done;
+   add slides only with `slides add … --after <id> --as <name>`.
+7. Maths: `<span class="math" data-tex="…">`; after direct edits run `slides math <deck>`. Figures made by a script:
+   put `data-source="scripts/…"` on the `<img>` and run `slides figures <deck> --refresh`.
+8. Undo a bad edit with `slides history` / `slides restore`. Notes left on a click step: look with `render --step K`.
+9. Keep the human's manual edits (inline `translate`/size styles, `.free` elements) unless asked to change them.
 
 The human may have the editor open, and it live-reloads your file changes, so keep each save to a valid slide.
