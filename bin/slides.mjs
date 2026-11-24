@@ -35,6 +35,12 @@ Slides
                                                  relabel the timeline on every slide, or copy one slide's to all
                                                  (default source: the most recently edited slide)
 
+Talk timing (presenter view: press P while presenting)
+  slides target <deck>                           talk length and per-slide target times
+  slides target <deck> --minutes 20              set the talk's target length (0 removes it)
+  slides target <deck> <slide> --seconds 90      set a slide's target time (data-time; 0 removes it)
+  slides rehearsals <deck> [--all]               times per slide from the last rehearsal (or every run)
+
 Agent ↔ human loop
   slides comments <deck> [--all]                 notes the human left (open only by default)
   slides resolve <deck> <comment-id> [--reply "what you did"]
@@ -70,6 +76,7 @@ for (let i = 0; i < argv.length; i++) {
 const [cmd, ...rest] = pos;
 
 const need = (v, what) => { if (v === undefined || v === true || v === '') { fail(`Missing ${what}. Run "slides help".`); } return v; };
+const fmtSec = (s) => { s = Math.round(s); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`; };
 function fail(msg) { console.error(`error: ${msg}`); process.exit(1); }
 
 const text = (html) => html.replace(/<aside class="notes">[\s\S]*?<\/aside>/gi, '').replace(/<(br|\/p|\/li|\/h\d|\/div)>/gi, ' ').replace(/<[^>]+>/g, '').replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/\s+/g, ' ').trim();
@@ -215,6 +222,37 @@ async function main() {
       const differ = withToc.filter(([, h]) => store.tocLabels(store.tocOf(h)).join('|') !== labels.join('|')).map(([id]) => id);
       if (differ.length) console.log(`⚠ different timeline on: ${differ.join(', ')} (fix with: slides toc ${d} --sync --from <id>)`);
       for (const [id, h] of withToc) { const n = store.sectionOf(h); console.log(`  ${id.padEnd(24)} ${n ? `${n}. ${labels[n - 1] ?? '(no such item)'}` : '—'}`); }
+      return;
+    }
+
+    case 'target': {
+      const d = need(rest[0], 'deck name');
+      if (rest[1]) {
+        if (opt.seconds === undefined || opt.seconds === true) fail('give --seconds N (0 removes the target)');
+        const v = store.setSlideTime(d, rest[1], +opt.seconds);
+        console.log(v ? `${rest[1]}: target ${fmtSec(v)}` : `${rest[1]}: target removed`);
+        return;
+      }
+      if (opt.minutes !== undefined && opt.minutes !== true) { const v = store.setTalkMinutes(d, +opt.minutes); console.log(v ? `Talk target: ${v} min` : 'Talk target removed'); }
+      const t = store.readTargets(d);
+      const sum = t.slides.reduce((a, s) => a + (s.seconds || 0), 0);
+      console.log(`Talk target: ${t.talkMinutes ? t.talkMinutes + ' min' : '— (set with --minutes N)'}${sum ? `   per-slide targets add up to ${fmtSec(sum)}` : ''}`);
+      t.slides.forEach((s, k) => console.log(`  ${String(k + 1).padStart(2)}. ${s.id.padEnd(24)} ${s.seconds ? fmtSec(s.seconds) : '—'}`));
+      return;
+    }
+    case 'rehearsals': {
+      const d = need(rest[0], 'deck name');
+      const runs = store.readRehearsals(d);
+      if (!runs.length) { console.log(`No rehearsals yet for "${d}". Present the deck, press P for the presenter view, then ● Rehearse.`); return; }
+      const ids = store.readMeta(d).slides;
+      for (const r of opt.all ? runs : runs.slice(-1)) {
+        const goal = r.talkMinutes ? r.talkMinutes * 60 : 0;
+        console.log(`Rehearsal ${r.at}: total ${fmtSec(r.totalMs / 1000)}${goal ? ` (target ${fmtSec(goal)}, ${r.totalMs / 1000 > goal ? 'over by ' + fmtSec(r.totalMs / 1000 - goal) : 'under by ' + fmtSec(goal - r.totalMs / 1000)})` : ''}`);
+        for (const sl of r.slides) {
+          const k = ids.indexOf(sl.id), sec = sl.ms / 1000;
+          console.log(`  ${k >= 0 ? String(k + 1).padStart(2) + '.' : '  -'} ${sl.id.padEnd(24)} ${fmtSec(sec).padStart(6)}${sl.target ? `  target ${fmtSec(sl.target)}${sec > sl.target ? '  OVER +' + fmtSec(sec - sl.target) : ''}` : ''}`);
+        }
+      }
       return;
     }
 

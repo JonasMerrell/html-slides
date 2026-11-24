@@ -212,6 +212,10 @@ route('DELETE', '/api/decks/:d/comments/:cid', (req, res, p) => { store.deleteCo
 
 route('POST', '/api/decks/:d/status', async (req, res, p) => json(res, store.writeStatus(p.d, await readJson(req))));
 
+route('GET', '/api/decks/:d/targets', (req, res, p) => json(res, store.readTargets(p.d)));
+route('PUT', '/api/decks/:d/targets', async (req, res, p) => { const b = await readJson(req); json(res, { talkMinutes: store.setTalkMinutes(p.d, b.talkMinutes) }); });
+route('GET', '/api/decks/:d/rehearsals', (req, res, p) => json(res, store.readRehearsals(p.d)));
+route('POST', '/api/decks/:d/rehearsals', async (req, res, p) => json(res, store.addRehearsal(p.d, await readJson(req)), 201));
 route('GET', '/api/themes', (req, res) => json(res, store.listThemes()));
 route('GET', '/api/layouts', (req, res, p, url) => json(res, store.listLayouts(url.searchParams.get('theme') || null)));
 route('POST', '/api/layouts', async (req, res) => {

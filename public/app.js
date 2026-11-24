@@ -234,7 +234,7 @@ function buildEditor() {
     btn('Agent', () => agentModal(), { ic: 'bot', title: 'Prompts for working with an agent' }),
     h('div', { class: 'sep' }),
     btn('Export', () => { flushSaves().then(() => { location.href = `/export/${D()}`; }); }, { ic: 'download', title: 'Download a single self-contained HTML file' }),
-    btn('Present', () => { flushSaves().then(() => window.open(`/present/${D()}#${S.order.indexOf(S.current) + 1}`, '_blank')); }, { cls: 'primary', ic: 'play' }),
+    btn('Present', () => { flushSaves().then(() => window.open(`/present/${D()}#${S.order.indexOf(S.current) + 1}`, '_blank')); }, { cls: 'primary', ic: 'play', title: 'Present from this slide. There, P opens the presenter view (notes, next slide, timer, rehearsal).' }),
     uiThemeBtn());
 
   E.list = h('div', { class: 'slide-list' });
@@ -1447,12 +1447,16 @@ function slidePanel() {
     sel.addEventListener('change', () => { if (sel.value) section().dataset.section = sel.value; else delete section().dataset.section; commit(); renderInspector(); });
     chapter = h('label', { class: 'field', title: 'Highlights this item in the timeline. Editing the timeline text on any slide updates every slide.' }, h('span', null, 'Chapter (timeline)'), sel);
   }
+  // target time for rehearsals (presenter view): data-time="seconds" on the <section>
+  const tIn = h('input', { type: 'number', min: 0, step: 5, placeholder: '—', value: sec?.dataset.time || '', style: { width: '90px' } });
+  tIn.addEventListener('change', () => { const v = Math.round(+tIn.value); if (v > 0) section().dataset.time = String(v); else { delete section().dataset.time; tIn.value = ''; } commit(); });
+  const timeField = h('label', { class: 'field', style: { flex: '0 0 auto' }, title: 'How long you want to spend on this slide. The presenter view (P while presenting) compares it with your rehearsal times.' }, h('span', null, 'Target time (s)'), tIn);
   return h('section', { class: 'panel' },
     h('h4', null, `Slide ${S.order.indexOf(id) + 1} of ${S.order.length}`),
     h('div', { class: 'row' },
       h('label', { class: 'field' }, h('span', null, 'Slide id (file name)'), idIn),
       h('label', { class: 'field', style: { flex: '0 0 auto' } }, h('span', null, 'Layout'), h('div', { class: 'el-name', style: { padding: '7px 0' } }, sec?.dataset.layout || '—'))),
-    chapter,
+    h('div', { class: 'row' }, chapter, timeField),
     over.length ? h('div', { class: 'chip warn' }, `⚠ Overflows: ${over.join(', ')}`) : null,
     h('div', { class: 'row' }, bg, h('span', { class: 'muted', style: { flex: 1 } }, 'Slide background'),
       sec?.style.background ? btn('', () => { section().style.removeProperty('background'); commit(); renderInspector(); }, { cls: 'icon ghost small', ic: 'reset', title: 'Reset to theme' }) : null),

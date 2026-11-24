@@ -188,6 +188,18 @@ direct file edits (picked up by the editor server, and by `slides comment` / `sl
 - When you `slides resolve` a note, the slide as it was when the note was left and as it is now are stored on the
   note, and the human sees a before/after **See change** view. Make the edit first, then resolve.
 
+## Presenter view and rehearsals
+
+While presenting (`/present/<deck>` or an exported file), **P** (or the screen button) opens a presenter window: the
+current slide at its click step, the next slide or click, large speaker notes, the talk timer, a clock and the
+position. Both windows stay in sync either way (also from `file://` exports). Embeds run only in the audience window.
+**● Rehearse** times each slide on the talk timer; **■ Finish** shows a table of time vs. target per slide.
+- Targets: `slides target <deck> --minutes 20` (whole talk, `talkMinutes` in deck.json) and
+  `slides target <deck> <slide> --seconds 90` (`data-time="90"` on the `<section>`). `slides target <deck>` lists them.
+- `slides rehearsals <deck> [--all]` prints the last run (saved in `decks/<deck>/rehearsals.json` when presented from
+  the server). Use it when asked to trim a talk: slides far over their target are the ones to shorten or split.
+- Write speaker notes in `<aside class="notes">`: they are what the presenter reads.
+
 ## Workflow
 
 1. **Orient**: `slides decks`, `slides outline <deck>`, `slides layouts`.
@@ -208,7 +220,7 @@ direct file edits (picked up by the editor server, and by `slides comment` / `sl
    - `slides resolve <deck> <comment-id> --reply "Shortened to 4 bullets"`.
    - To ask the human something: `slides comment <deck> <slide> "Which chart do you prefer?"`.
 5. **Export** when asked: `slides export <deck> --out deck.html` (single file, assets and embeds inlined, works offline).
-   Present mode, with speaker notes on `N`: open `/present/<deck>` in the editor.
+   Present mode, with speaker notes on `N` and the presenter view on `P`: open `/present/<deck>` in the editor.
 
 ## Example slide
 

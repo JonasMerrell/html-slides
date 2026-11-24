@@ -31,6 +31,8 @@ On a remote machine, forward the port with `ssh -L 4173:127.0.0.1:4173 host`, or
    (every save and agent edit is kept, with restore).
 4. **Present / export.** **Present** opens a live presentation (arrow keys, `F` fullscreen,
    `N` speaker notes; timeline items link to their chapter, double-click the slide number to jump to a slide).
+   **P** opens a presenter view (current and next slide, notes, timer, clock) that stays in sync with the audience
+   window, with a **Rehearse** mode that times every slide against its target (`slides target`, `slides rehearsals`).
    **Export** downloads one self-contained `.html` file (print it to PDF if needed).
 
 ## Layout
